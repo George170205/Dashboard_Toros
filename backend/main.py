@@ -19,11 +19,51 @@ app.add_middleware(
 )
 
 from pydantic import BaseModel
+import hashlib
+import uuid
 
 class TemporadaCreate(BaseModel):
     nombre: str
     ano: int
     descripcion: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    conn = get_connection()
+    cursor = conn.cursor()
+    pw_hash = hashlib.sha256(req.password.encode()).hexdigest()
+    
+    cursor.execute("""
+    SELECT id, nombre, correo, username, rol, avatar_color 
+    FROM usuarios 
+    WHERE (username = ? OR correo = ?) AND password_hash = ?
+    """, (req.username.strip().lower(), req.username.strip().lower(), pw_hash))
+    user = cursor.fetchone()
+    conn.close()
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+        
+    user_dict = dict(user)
+    token = f"token_{uuid.uuid4().hex[:16]}"
+    return {
+        "status": "success",
+        "user": user_dict,
+        "token": token
+    }
+
+@app.get("/api/auth/users")
+def get_public_users():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nombre, correo, username, rol, avatar_color FROM usuarios ORDER BY id ASC")
+    users = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return users
 
 @app.on_event("startup")
 def startup_event():

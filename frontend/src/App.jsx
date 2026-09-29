@@ -11,10 +11,20 @@ import ComparativaView from './components/ComparativaView';
 import CanalesView from './components/CanalesView';
 import ReglasView from './components/ReglasView';
 import CreateSeasonModal from './components/CreateSeasonModal';
+import LoginScreen from './components/LoginScreen';
 import { Calendar, RefreshCw, PlusCircle, AlertCircle } from 'lucide-react';
 import { API_URL } from './config';
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('toros_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
   const [currentView, setView] = useState('dashboard');
   const [temporadas, setTemporadas] = useState([]);
   const [activeTemporada, setActiveTemporada] = useState(null);
@@ -213,6 +223,23 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  const handleLoginSuccess = (user, token) => {
+    setCurrentUser(user);
+    localStorage.setItem('toros_user', JSON.stringify(user));
+    localStorage.setItem('toros_token', token);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('toros_user');
+    localStorage.removeItem('toros_token');
+  };
+
+  // If not authenticated, render LoginScreen
+  if (!currentUser) {
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div className="app-container">
       {/* Mobile Backdrop */}
@@ -231,6 +258,7 @@ export default function App() {
         onOpenCreateSeason={() => setShowCreateSeasonModal(true)}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        currentUser={currentUser}
       />
 
       {/* Main Wrapper */}
@@ -239,6 +267,8 @@ export default function App() {
           searchTerm={searchTerm}
           setSearchTerm={setSearchTerm}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          currentUser={currentUser}
+          onLogout={handleLogout}
         />
 
         <main className="content-body">

@@ -20,7 +20,8 @@ export default function Sidebar({
   setActiveTemporada,
   onOpenCreateSeason,
   isOpen,
-  onClose
+  onClose,
+  currentUser
 }) {
   const handleNavClick = (viewName) => {
     setView(viewName);
@@ -162,12 +163,24 @@ export default function Sidebar({
         </div>
       </nav>
 
-      {/* Footer Info */}
+      {/* Footer Info with User */}
       <div className="sidebar-footer">
-        <div className="avatar" style={{ width: 28, height: 28, fontSize: '0.75rem' }}>TJ</div>
-        <div style={{ fontSize: '0.75rem', color: '#8e9bb0' }}>
-          <div>LMB Temporada</div>
-          <div style={{ color: '#0ac282', fontWeight: 600 }}>● Sistema Operativo</div>
+        <div 
+          className="avatar" 
+          style={{ 
+            width: 28, 
+            height: 28, 
+            fontSize: '0.72rem',
+            background: currentUser?.avatar_color || '#fe9365' 
+          }}
+        >
+          {currentUser?.nombre ? currentUser.nombre.split(' ').map(n => n[0]).slice(0, 2).join('') : 'TJ'}
+        </div>
+        <div style={{ fontSize: '0.75rem', color: '#8e9bb0', overflow: 'hidden' }}>
+          <div style={{ fontWeight: 600, color: '#ffffff', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+            {currentUser?.nombre || 'Usuario Autorizado'}
+          </div>
+          <div style={{ color: '#0ac282', fontSize: '0.7rem' }}>● {currentUser?.rol || 'Sesión Activa'}</div>
         </div>
       </div>
     </aside>

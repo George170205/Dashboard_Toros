@@ -99,16 +99,40 @@ def init_db():
     ON ventas(temporada_id, orden, evento_nombre, zona, seccion, asiento)
     """)
 
-    # Índices para consultas y KPIs ultrarrápidos
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ventas_temp_cortesia ON ventas(temporada_id, es_cortesia)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ventas_temp_evento ON ventas(temporada_id, evento_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ventas_temp_fecha ON ventas(temporada_id, fecha_venta)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ventas_canal ON ventas(temporada_id, canal_normalizado)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ventas_zona ON ventas(temporada_id, zona)")
+    # Tabla de Usuarios
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS usuarios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        correo TEXT NOT NULL UNIQUE,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        rol TEXT NOT NULL DEFAULT 'Administrador',
+        avatar_color TEXT DEFAULT '#fe9365',
+        fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Seed de los 3 perfiles solicitados
+    cursor.execute("SELECT COUNT(*) as cnt FROM usuarios")
+    if cursor.fetchone()["cnt"] == 0:
+        import hashlib
+        def h(p): return hashlib.sha256(p.encode()).hexdigest()
+        default_pw = h("toros2026")
+
+        users_data = [
+            ("Jorge Ruiz", "jorge.ruiz@toros.com", "jorge.ruiz", default_pw, "Administrador General", "#fe9365"),
+            ("Juan Manuel Vega", "juan.vega@toros.com", "juan.vega", default_pw, "Director / Administrador", "#0ac282"),
+            ("Manuel Alejandro Quevedo", "manuel.quevedo@toros.com", "manuel.quevedo", default_pw, "Analista Financiero", "#01a9ac"),
+        ]
+        cursor.executemany("""
+        INSERT INTO usuarios (nombre, correo, username, password_hash, rol, avatar_color)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, users_data)
 
     conn.commit()
     conn.close()
 
 if __name__ == "__main__":
     init_db()
-    print("Database schema created successfully.")
+    print("Database schema created and users seeded successfully.")
