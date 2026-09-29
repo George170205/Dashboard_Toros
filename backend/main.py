@@ -18,9 +18,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from pydantic import BaseModel
+
+class TemporadaCreate(BaseModel):
+    nombre: str
+    ano: int
+    descripcion: Optional[str] = None
+
 @app.on_event("startup")
 def startup_event():
     init_db()
+    temp_id = get_or_create_temporada("Temporada 2026", 2026)
+    # If fresh database (0 cargas), auto-load the 3 CSVs so it is ready on deploy!
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) as cnt FROM cargas WHERE temporada_id = ?", (temp_id,))
+    cnt = c.fetchone()["cnt"]
+    conn.close()
+    if cnt == 0:
+        print("Auto-seeding Temporada 2026 from CSVs...")
+        base_dir = Path(__file__).resolve().parent.parent
+        csv_dir = base_dir / "csvs"
+        files = sorted(list(csv_dir.glob("*.csv")))
+        for f in files:
+            try:
+                load_csv_file(str(f), temp_id)
+            except Exception as e:
+                print(f"Error loading {f}: {e}")
 
 @app.get("/api/health")
 def health_check():
@@ -49,16 +73,16 @@ def list_temporadas():
     return rows
 
 @app.post("/api/temporadas")
-def create_temporada(nombre: str = Form(...), ano: int = Form(...), descripcion: Optional[str] = Form(None)):
+def create_temporada(payload: TemporadaCreate):
     conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("INSERT INTO temporadas (nombre, ano, descripcion) VALUES (?, ?, ?)",
-                       (nombre, ano, descripcion or f"Ventas {nombre}"))
+                       (payload.nombre, payload.ano, payload.descripcion or f"Ventas {payload.nombre}"))
         conn.commit()
         temp_id = cursor.lastrowid
         conn.close()
-        return {"id": temp_id, "nombre": nombre, "ano": ano}
+        return {"id": temp_id, "nombre": payload.nombre, "ano": payload.ano}
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=400, detail=f"Error al crear temporada: {str(e)}")
@@ -74,16 +98,18 @@ def reset_temporada(temporada_id: int):
     clear_temporada_tickets(temporada_id)
     return {"status": "success", "message": f"Datos de boletos de temporada {temporada_id} eliminados. Lista para recargar."}
 
+@app.post("/api/init-2026")
 @app.post("/api/temporadas/{temporada_id}/reload-initial")
-def reload_initial(temporada_id: int):
+def reload_initial(temporada_id: int = 1):
     """Recarga los 3 CSVs iniciales de 2026."""
-    clear_temporada_tickets(temporada_id)
+    temp_id = get_or_create_temporada("Temporada 2026", 2026)
+    clear_temporada_tickets(temp_id)
     results = []
     base_dir = Path(__file__).resolve().parent.parent
     csv_dir = base_dir / "csvs"
     files = sorted(list(csv_dir.glob("*.csv")))
     for f in files:
-        res = load_csv_file(str(f), temporada_id)
+        res = load_csv_file(str(f), temp_id)
         results.append(res)
     return {"status": "success", "cargas": results}
 
@@ -283,9 +309,20 @@ def get_dashboard_data(temporada_id: int):
     }
 
 @app.get("/api/comparativa")
-def compare_temporadas(t1_id: int = Query(...), t2_id: int = Query(...)):
+def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] = Query(None)):
     conn = get_connection()
     cursor = conn.cursor()
+    cursor.execute("SELECT id FROM temporadas ORDER BY ano DESC, id DESC")
+    temp_rows = [r["id"] for r in cursor.fetchall()]
+    
+    if not temp_rows:
+        conn.close()
+        raise HTTPException(status_code=404, detail="No hay temporadas registradas.")
+
+    if not t1_id or t1_id not in temp_rows:
+        t1_id = temp_rows[0]
+    if not t2_id or t2_id not in temp_rows:
+        t2_id = temp_rows[1] if len(temp_rows) > 1 else temp_rows[0]
 
     def get_summary(tid):
         cursor.execute("SELECT * FROM temporadas WHERE id = ?", (tid,))
@@ -339,7 +376,9 @@ def compare_temporadas(t1_id: int = Query(...), t2_id: int = Query(...)):
     }
 
 @app.post("/api/cargas/upload")
-async def upload_csv_file(temporada_id: int = Form(...), file: UploadFile = File(...)):
+async def upload_csv_file(temporada_id: Optional[int] = Form(None), file: UploadFile = File(...)):
+    if not temporada_id or temporada_id <= 0:
+        temporada_id = get_or_create_temporada("Temporada 2026", 2026)
     # Save uploaded file to temp file
     upload_dir = Path(__file__).resolve().parent / "uploads"
     upload_dir.mkdir(exist_ok=True)

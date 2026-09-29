@@ -10,7 +10,8 @@ import CargasView from './components/CargasView';
 import ComparativaView from './components/ComparativaView';
 import CanalesView from './components/CanalesView';
 import ReglasView from './components/ReglasView';
-import { Calendar, RefreshCw } from 'lucide-react';
+import CreateSeasonModal from './components/CreateSeasonModal';
+import { Calendar, RefreshCw, PlusCircle, AlertCircle } from 'lucide-react';
 import { API_URL } from './config';
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
   const [dashboardData, setDashboardData] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showCreateSeasonModal, setShowCreateSeasonModal] = useState(false);
 
   // Fetch seasons
   useEffect(() => {
@@ -32,13 +34,20 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setTemporadas(data);
-        if (data.length > 0 && !activeTemporada) {
-          setActiveTemporada(data[0]);
+        if (data.length > 0) {
+          // If no active season or current active is not in data, pick the first
+          setActiveTemporada(prev => {
+            if (!prev) return data[0];
+            const found = data.find(t => t.id === prev.id);
+            return found || data[0];
+          });
         }
+        return data;
       }
     } catch (err) {
       console.error('Error fetching temporadas:', err);
     }
+    return [];
   };
 
   // Fetch dashboard data when active temporada changes
@@ -49,6 +58,7 @@ export default function App() {
   }, [activeTemporada?.id]);
 
   const fetchDashboardData = async (temporadaId) => {
+    if (!temporadaId) return;
     setIsLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/dashboard/${temporadaId}`);
@@ -63,33 +73,85 @@ export default function App() {
     }
   };
 
+  // Create Season Handler
+  const handleCreateSeason = async (seasonData) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/temporadas`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(seasonData),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Error creando temporada');
+      }
+
+      const newSeason = await res.json();
+      const updatedTemps = await fetchTemporadas();
+      const found = updatedTemps.find(t => t.id === newSeason.id);
+      if (found) {
+        setActiveTemporada(found);
+      }
+      setView('dashboard');
+    } catch (err) {
+      console.error(err);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Upload handler
   const handleUploadFile = async (file) => {
     setIsLoading(true);
-    const formData = new FormData();
-    formData.append('temporada_id', activeTemporada.id);
-    formData.append('file', file);
+    try {
+      let targetId = activeTemporada?.id;
+      // If no active season, auto create Temporada 2026 or pick first
+      if (!targetId) {
+        if (temporadas.length > 0) {
+          targetId = temporadas[0].id;
+        } else {
+          // Initialize first
+          const initRes = await fetch(`${API_URL}/api/init-2026`, { method: 'POST' });
+          const initData = await initRes.json();
+          const refreshed = await fetchTemporadas();
+          targetId = refreshed[0]?.id || 1;
+        }
+      }
 
-    const res = await fetch(`${API_URL}/api/cargas/upload`, {
-      method: 'POST',
-      body: formData,
-    });
+      const formData = new FormData();
+      formData.append('temporada_id', targetId);
+      formData.append('file', file);
 
-    if (!res.ok) {
-      const err = await res.json();
+      const res = await fetch(`${API_URL}/api/cargas/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Error procesando el archivo CSV');
+      }
+
+      const json = await res.json();
+      await fetchDashboardData(targetId);
+      await fetchTemporadas();
+      return json.result;
+    } catch (err) {
+      console.error(err);
+      throw err;
+    } finally {
       setIsLoading(false);
-      throw new Error(err.detail || 'Error procesando el archivo CSV');
     }
-
-    const json = await res.json();
-    await fetchDashboardData(activeTemporada.id);
-    await fetchTemporadas();
-    setIsLoading(false);
-    return json.result;
   };
 
   // Reset handler (requested by user to test re-uploading!)
   const handleResetTemporada = async () => {
+    if (!activeTemporada?.id) return;
     setIsLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/temporadas/${activeTemporada.id}/reset`, {
@@ -110,12 +172,18 @@ export default function App() {
   const handleReloadInitial = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/temporadas/${activeTemporada.id}/reload-initial`, {
+      const url = activeTemporada?.id 
+        ? `${API_URL}/api/temporadas/${activeTemporada.id}/reload-initial`
+        : `${API_URL}/api/init-2026`;
+
+      const res = await fetch(url, {
         method: 'POST',
       });
-      if (res.ok) {
-        await fetchDashboardData(activeTemporada.id);
-        await fetchTemporadas();
+      
+      const refreshedTemps = await fetchTemporadas();
+      const currentId = activeTemporada?.id || refreshedTemps[0]?.id;
+      if (currentId) {
+        await fetchDashboardData(currentId);
       }
     } catch (err) {
       console.error(err);
@@ -153,6 +221,7 @@ export default function App() {
         temporadas={temporadas}
         activeTemporada={activeTemporada}
         setActiveTemporada={setActiveTemporada}
+        onOpenCreateSeason={() => setShowCreateSeasonModal(true)}
       />
 
       {/* Main Wrapper */}
@@ -163,6 +232,49 @@ export default function App() {
         />
 
         <main className="content-body">
+          {/* Empty Database Banner if no season exists yet */}
+          {temporadas.length === 0 && (
+            <div style={{
+              background: '#fff9f5',
+              border: '1px solid #fe9365',
+              borderRadius: 8,
+              padding: '20px 24px',
+              marginBottom: 24,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 16
+            }}>
+              <div>
+                <h3 style={{ color: '#2c3e50', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <AlertCircle size={20} color="#fe9365" />
+                  Base de datos inicial lista
+                </h3>
+                <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: 4 }}>
+                  No se detectaron temporadas cargadas en este servidor. Puedes inicializar la <strong>Temporada 2026</strong> con los 3 CSVs o crear una nueva temporada.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button 
+                  className="btn-cta-orange" 
+                  style={{ width: 'auto', padding: '8px 18px' }}
+                  onClick={handleReloadInitial}
+                  disabled={isLoading}
+                >
+                  <RefreshCw size={15} className={isLoading ? 'spin' : ''} style={{ marginRight: 6 }} />
+                  Cargar Temporada 2026 (3 CSVs)
+                </button>
+                <button 
+                  className="btn-secondary"
+                  onClick={() => setShowCreateSeasonModal(true)}
+                >
+                  + Crear Temporada
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Header Row with Title and Season Selector */}
           <div className="page-header-row">
             <div>
@@ -174,7 +286,7 @@ export default function App() {
                 {currentView === 'reglas' && 'Reglas de Negocio del Sistema'}
               </h1>
               <div style={{ fontSize: '0.82rem', color: '#78909c', marginTop: 4 }}>
-                {activeTemporada?.nombre} • Toros de Tijuana (Liga Mexicana de Béisbol)
+                {activeTemporada?.nombre || 'Selecciona o crea una temporada'} • Toros de Tijuana (Liga Mexicana de Béisbol)
               </div>
             </div>
 
@@ -188,6 +300,7 @@ export default function App() {
                     if (found) setActiveTemporada(found);
                   }}
                 >
+                  {temporadas.length === 0 && <option value="">Sin Temporadas</option>}
                   {temporadas.map(t => (
                     <option key={t.id} value={t.id}>{t.nombre}</option>
                   ))}
@@ -195,9 +308,19 @@ export default function App() {
               </div>
 
               <button 
+                className="btn-secondary" 
+                style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 6 }}
+                onClick={() => setShowCreateSeasonModal(true)}
+                title="Crear nueva temporada"
+              >
+                <PlusCircle size={15} color="#fe9365" />
+                <span>Nueva</span>
+              </button>
+
+              <button 
                 className="icon-btn" 
                 title="Actualizar datos"
-                onClick={() => fetchDashboardData(activeTemporada.id)}
+                onClick={() => activeTemporada?.id && fetchDashboardData(activeTemporada.id)}
               >
                 <RefreshCw size={17} className={isLoading ? 'spin' : ''} />
               </button>
@@ -266,6 +389,13 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Modal for creating a new season */}
+      <CreateSeasonModal 
+        isOpen={showCreateSeasonModal}
+        onClose={() => setShowCreateSeasonModal(false)}
+        onCreateSeason={handleCreateSeason}
+      />
     </div>
   );
 }

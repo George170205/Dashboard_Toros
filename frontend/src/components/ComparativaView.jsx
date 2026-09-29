@@ -9,21 +9,32 @@ export default function ComparativaView({ temporadas = [], activeTemporada }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (temporadas.length > 0) {
+      if (!temp1Id) setTemp1Id(temporadas[0].id);
+      if (!temp2Id) setTemp2Id(temporadas[1]?.id || temporadas[0].id);
+    }
+  }, [temporadas]);
+
+  useEffect(() => {
     if (temp1Id && temp2Id) {
       fetchComparativa();
     }
   }, [temp1Id, temp2Id]);
 
   const fetchComparativa = async () => {
+    if (!temp1Id || !temp2Id) return;
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/comparativa?t1_id=${temp1Id}&t2_id=${temp2Id}`);
       if (res.ok) {
         const data = await res.json();
         setComparativa(data);
+      } else {
+        setComparativa(null);
       }
     } catch (e) {
       console.error(e);
+      setComparativa(null);
     } finally {
       setLoading(false);
     }
@@ -87,6 +98,16 @@ export default function ComparativaView({ temporadas = [], activeTemporada }) {
         </div>
 
         {/* Comparison Metrics Grid */}
+        {!comparativa && !loading && (
+          <div style={{ textAlign: 'center', padding: '36px 16px', background: '#f8fafc', borderRadius: 8, marginTop: 16 }}>
+            <Layers size={36} color="#fe9365" style={{ margin: '0 auto 10px' }} />
+            <h4 style={{ color: '#2c3e50', marginBottom: 4 }}>Se requieren dos temporadas para comparar</h4>
+            <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
+              Actualmente solo tienes una temporada disponible o sin datos. Crea una temporada adicional (ej. Temporada 2027) para desbloquear la comparación lado a lado.
+            </p>
+          </div>
+        )}
+
         {comparativa && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginTop: 16 }}>
             {/* Metric 1 */}
