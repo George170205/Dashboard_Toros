@@ -113,22 +113,21 @@ def init_db():
     )
     """)
 
-    # Seed de los 3 perfiles solicitados
-    cursor.execute("SELECT COUNT(*) as cnt FROM usuarios")
-    if cursor.fetchone()["cnt"] == 0:
-        import hashlib
-        def h(p): return hashlib.sha256(p.encode()).hexdigest()
-        default_pw = h("toros2026")
+    # Seed de usuarios autorizados
+    import hashlib
+    def h(p): return hashlib.sha256(p.encode()).hexdigest()
+    default_pw = h("toros2026")
 
-        users_data = [
-            ("Jorge Ruiz", "jorge.ruiz@toros.com", "jorge.ruiz", default_pw, "Administrador General", "#fe9365"),
-            ("Juan Manuel Vega", "juan.vega@toros.com", "juan.vega", default_pw, "Director / Administrador", "#0ac282"),
-            ("Manuel Alejandro Quevedo", "manuel.quevedo@toros.com", "manuel.quevedo", default_pw, "Analista Financiero", "#01a9ac"),
-        ]
-        cursor.executemany("""
-        INSERT INTO usuarios (nombre, correo, username, password_hash, rol, avatar_color)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """, users_data)
+    users_data = [
+        ("Jorge Ruiz", "jorge.ruiz@toros.com", "jorge.ruiz", default_pw, "Administrador General", "#fe9365"),
+        ("Juan Manuel Vega", "juan.vega@toros.com", "juan.vega", default_pw, "Director / Administrador", "#0ac282"),
+        ("Manuel Alejandro Quevedo", "manuel.quevedo@toros.com", "manuel.quevedo", default_pw, "Analista Financiero", "#01a9ac"),
+        ("Alexa Luna Montesinos", "alexa.luna@toros.com", "alexa.luna", default_pw, "Administradora", "#ec4899"),
+    ]
+    cursor.executemany("""
+    INSERT OR IGNORE INTO usuarios (nombre, correo, username, password_hash, rol, avatar_color)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, users_data)
 
     conn.commit()
     conn.close()
