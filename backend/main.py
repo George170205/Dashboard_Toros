@@ -77,6 +77,7 @@ def startup_event():
             except Exception as e:
                 print(f"Error loading {f}: {e}")
 
+@app.get("/")
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "service": "Toros Sales API"}

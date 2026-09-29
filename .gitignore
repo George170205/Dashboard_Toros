@@ -16,3 +16,6 @@ uploads/
 *.sqlite
 *.sqlite3
 backend/toros_dashboard.db*
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
