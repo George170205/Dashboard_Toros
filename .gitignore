@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# Environment & Builds
+.env
+dist/
+.vite/
+uploads/
+
+# Database files (generated at runtime, never commit to git)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+backend/toros_dashboard.db*
