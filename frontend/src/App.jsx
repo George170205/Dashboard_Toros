@@ -22,6 +22,7 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showCreateSeasonModal, setShowCreateSeasonModal] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Fetch seasons
   useEffect(() => {
@@ -214,6 +215,12 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {/* Mobile Backdrop */}
+      <div 
+        className={`sidebar-backdrop ${sidebarOpen ? 'active' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+
       {/* Sidebar matching Adminty theme */}
       <Sidebar 
         currentView={currentView}
@@ -222,6 +229,8 @@ export default function App() {
         activeTemporada={activeTemporada}
         setActiveTemporada={setActiveTemporada}
         onOpenCreateSeason={() => setShowCreateSeasonModal(true)}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
       />
 
       {/* Main Wrapper */}
@@ -229,6 +238,7 @@ export default function App() {
         <Header 
           searchTerm={searchTerm}
           setSearchTerm={setSearchTerm}
+          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         />
 
         <main className="content-body">

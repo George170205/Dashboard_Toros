@@ -1,7 +1,7 @@
 import React from 'react';
-import { Search, Maximize2, Bell, MessageSquare, ChevronDown } from 'lucide-react';
+import { Search, Maximize2, Bell, MessageSquare, ChevronDown, Menu } from 'lucide-react';
 
-export default function Header({ searchTerm, setSearchTerm }) {
+export default function Header({ searchTerm, setSearchTerm, onToggleSidebar }) {
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
@@ -15,16 +15,27 @@ export default function Header({ searchTerm, setSearchTerm }) {
   return (
     <header className="top-header">
       <div className="header-left">
+        {/* Mobile Hamburger Menu Button */}
+        <button 
+          className="icon-btn mobile-toggle-btn" 
+          onClick={onToggleSidebar}
+          aria-label="Abrir menú"
+          title="Abrir menú"
+        >
+          <Menu size={22} color="#2c3e50" />
+        </button>
+
         <div className="search-bar">
           <Search size={16} color="#78909c" />
           <input 
             type="text" 
-            placeholder="Buscar eventos, zonas, órdenes..." 
+            placeholder="Buscar eventos..." 
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        <button className="icon-btn" onClick={toggleFullscreen} title="Pantalla Completa">
+
+        <button className="icon-btn desktop-only" onClick={toggleFullscreen} title="Pantalla Completa">
           <Maximize2 size={18} />
         </button>
       </div>

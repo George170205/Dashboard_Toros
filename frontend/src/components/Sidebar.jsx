@@ -6,9 +6,10 @@ import {
   Layers, 
   PieChart, 
   FileText, 
-  ShieldCheck,
-  Calendar,
-  Sparkles
+  ShieldCheck, 
+  Calendar, 
+  Sparkles,
+  X
 } from 'lucide-react';
 
 export default function Sidebar({ 
@@ -17,17 +18,42 @@ export default function Sidebar({
   temporadas = [], 
   activeTemporada, 
   setActiveTemporada,
-  onOpenCreateSeason 
+  onOpenCreateSeason,
+  isOpen,
+  onClose
 }) {
+  const handleNavClick = (viewName) => {
+    setView(viewName);
+    if (onClose) onClose();
+  };
+
+  const handleSeasonClick = (temp) => {
+    setActiveTemporada(temp);
+    setView('dashboard');
+    if (onClose) onClose();
+  };
+
   return (
-    <aside className="sidebar">
-      {/* Brand Header */}
+    <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
+      {/* Brand Header with Close button for mobile */}
       <div className="sidebar-header">
-        <div className="sidebar-logo-icon">T</div>
-        <div>
-          <div className="sidebar-brand-name">Toros de Tijuana</div>
-          <div className="sidebar-brand-sub">Sales Analytics</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="sidebar-logo-icon">T</div>
+          <div>
+            <div className="sidebar-brand-name">Toros de Tijuana</div>
+            <div className="sidebar-brand-sub">Sales Analytics</div>
+          </div>
         </div>
+
+        {/* Mobile Close Button */}
+        <button 
+          className="sidebar-close-btn"
+          onClick={onClose}
+          aria-label="Cerrar menú"
+          title="Cerrar menú"
+        >
+          <X size={20} />
+        </button>
       </div>
 
       {/* Navigation List */}
@@ -35,7 +61,7 @@ export default function Sidebar({
         <div className="nav-section-title">Navegación</div>
         <div 
           className={`nav-item ${currentView === 'dashboard' ? 'active' : ''}`}
-          onClick={() => setView('dashboard')}
+          onClick={() => handleNavClick('dashboard')}
         >
           <div className="nav-item-content">
             <LayoutDashboard size={18} />
@@ -51,6 +77,7 @@ export default function Sidebar({
             onClick={(e) => {
               e.stopPropagation();
               onOpenCreateSeason && onOpenCreateSeason();
+              if (onClose) onClose();
             }}
             title="Crear nueva temporada"
           >
@@ -66,10 +93,7 @@ export default function Sidebar({
             <div 
               key={temp.id}
               className={`nav-item ${currentView === 'dashboard' && activeTemporada?.id === temp.id ? 'active' : ''}`}
-              onClick={() => {
-                setActiveTemporada(temp);
-                setView('dashboard');
-              }}
+              onClick={() => handleSeasonClick(temp)}
             >
               <div className="nav-item-content">
                 <Calendar size={18} />
@@ -82,7 +106,10 @@ export default function Sidebar({
         <div 
           className="nav-item"
           style={{ color: '#fe9365', cursor: 'pointer', borderLeft: 'none' }}
-          onClick={() => onOpenCreateSeason && onOpenCreateSeason()}
+          onClick={() => {
+            onOpenCreateSeason && onOpenCreateSeason();
+            if (onClose) onClose();
+          }}
         >
           <div className="nav-item-content">
             <span style={{ fontSize: '1rem', fontWeight: 700 }}>+</span>
@@ -93,7 +120,7 @@ export default function Sidebar({
         <div className="nav-section-title">Análisis & Comparativas</div>
         <div 
           className={`nav-item ${currentView === 'comparativa' ? 'active' : ''}`}
-          onClick={() => setView('comparativa')}
+          onClick={() => handleNavClick('comparativa')}
         >
           <div className="nav-item-content">
             <Layers size={18} />
@@ -104,7 +131,7 @@ export default function Sidebar({
 
         <div 
           className={`nav-item ${currentView === 'canales' ? 'active' : ''}`}
-          onClick={() => setView('canales')}
+          onClick={() => handleNavClick('canales')}
         >
           <div className="nav-item-content">
             <PieChart size={18} />
@@ -115,7 +142,7 @@ export default function Sidebar({
         <div className="nav-section-title">Gestión de Datos</div>
         <div 
           className={`nav-item ${currentView === 'cargas' ? 'active' : ''}`}
-          onClick={() => setView('cargas')}
+          onClick={() => handleNavClick('cargas')}
         >
           <div className="nav-item-content">
             <UploadCloud size={18} />
@@ -126,7 +153,7 @@ export default function Sidebar({
 
         <div 
           className={`nav-item ${currentView === 'reglas' ? 'active' : ''}`}
-          onClick={() => setView('reglas')}
+          onClick={() => handleNavClick('reglas')}
         >
           <div className="nav-item-content">
             <ShieldCheck size={18} />
