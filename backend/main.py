@@ -56,15 +56,6 @@ def login(req: LoginRequest):
         "token": token
     }
 
-@app.get("/api/auth/users")
-def get_public_users():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, nombre, correo, username, rol, avatar_color FROM usuarios ORDER BY id ASC")
-    users = [dict(r) for r in cursor.fetchall()]
-    conn.close()
-    return users
-
 @app.on_event("startup")
 def startup_event():
     init_db()
