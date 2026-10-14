@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Dict
+import asyncio
 import os
 import shutil
 import tempfile
@@ -659,39 +660,59 @@ async def chat_endpoint(req: ChatRequest, current_user: dict = Depends(get_curre
         tools=AVAILABLE_TOOLS
     )
 
-    try:
-        chat = client.chats.create(
-            model=model_name,
-            config=config,
-            history=history
-        )
+    # Lista de modelos candidatos para alta disponibilidad ante saturación temporal
+    candidate_models = [model_name]
+    for alt in ["gemini-2.5-flash", "gemini-3.5-flash"]:
+        if alt not in candidate_models:
+            candidate_models.append(alt)
 
-        response = chat.send_message(current_prompt)
+    response = None
+    chat_used = None
+    successful_model = model_name
+    last_exception = None
 
-        herramientas_usadas = []
-        for h in chat.get_history():
-            for part in getattr(h, "parts", []):
-                if getattr(part, "function_call", None):
-                    herramientas_usadas.append({
-                        "nombre": part.function_call.name,
-                        "argumentos": getattr(part.function_call, "args", {})
-                    })
+    for m_idx, current_model in enumerate(candidate_models):
+        for attempt in range(3):
+            try:
+                chat = client.chats.create(
+                    model=current_model,
+                    config=config,
+                    history=history
+                )
+                response = chat.send_message(current_prompt)
+                successful_model = current_model
+                chat_used = chat
+                break
+            except Exception as e:
+                last_exception = e
+                err_text = str(e).lower()
+                is_transient = (
+                    "503" in err_text or 
+                    "high demand" in err_text or 
+                    "unavailable" in err_text or 
+                    "spikes in demand" in err_text or 
+                    "overloaded" in err_text or
+                    "temporarily unavailable" in err_text
+                )
+                if is_transient and attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                if is_transient and m_idx < len(candidate_models) - 1:
+                    # Si este modelo sigue congestionado, probar con el siguiente candidato
+                    break
+                break
 
-        return {
-            "status": "success",
-            "respuesta": response.text or "No se pudo generar una respuesta explicativa.",
-            "herramientas_usadas": herramientas_usadas,
-            "modelo": model_name
-        }
+        if response is not None:
+            break
 
-    except APIError as e:
-        status_code = 429 if getattr(e, "code", None) == 429 else 503
-        raise HTTPException(
-            status_code=status_code,
-            detail=f"Error en el servicio de Gemini: {getattr(e, 'message', str(e))}"
-        )
-    except Exception as e:
-        err_msg = str(e)
+    if response is None and last_exception is not None:
+        if isinstance(last_exception, APIError):
+            status_code = 429 if getattr(last_exception, "code", None) == 429 else 503
+            raise HTTPException(
+                status_code=status_code,
+                detail=f"Error en el servicio de Gemini: {getattr(last_exception, 'message', str(last_exception))}"
+            )
+        err_msg = str(last_exception)
         if "getaddrinfo" in err_msg.lower() or "connecterror" in err_msg.lower() or "timeout" in err_msg.lower():
             raise HTTPException(
                 status_code=503,
@@ -701,6 +722,23 @@ async def chat_endpoint(req: ChatRequest, current_user: dict = Depends(get_curre
             status_code=500,
             detail=f"Error procesando la consulta con el Asistente IA: {err_msg}"
         )
+
+    herramientas_usadas = []
+    if chat_used:
+        for h in chat_used.get_history():
+            for part in getattr(h, "parts", []):
+                if getattr(part, "function_call", None):
+                    herramientas_usadas.append({
+                        "nombre": part.function_call.name,
+                        "argumentos": getattr(part.function_call, "args", {})
+                    })
+
+    return {
+        "status": "success",
+        "respuesta": getattr(response, "text", "") or "No se pudo generar una respuesta explicativa.",
+        "herramientas_usadas": herramientas_usadas,
+        "modelo": successful_model
+    }
 
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB max
 
