@@ -15,6 +15,7 @@ import {
   Calendar,
   Layers
 } from 'lucide-react';
+import MarkdownRenderer from './MarkdownRenderer';
 
 export default function AiAssistantView({ activeTemporada, authFetch, API_URL }) {
   const [messages, setMessages] = useState([
@@ -179,29 +180,6 @@ export default function AiAssistantView({ activeTemporada, authFetch, API_URL })
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Helper to format simple markdown-like text (bold, bullet points)
-  const renderFormattedText = (raw) => {
-    if (!raw) return '';
-    return raw.split('\n').map((line, i) => {
-      // Bold replacement
-      let formattedLine = line;
-      const parts = line.split(/(\*\*.*?\*\*)/g);
-      return (
-        <p key={i} style={{ marginBottom: line.trim() === '' ? 8 : 4, lineHeight: 1.6 }}>
-          {parts.map((p, idx) => {
-            if (p.startsWith('**') && p.endsWith('**')) {
-              return <strong key={idx} style={{ color: '#2c3e50', fontWeight: 600 }}>{p.slice(2, -2)}</strong>;
-            }
-            if (p.startsWith('*') && p.endsWith('*') && !p.startsWith('**')) {
-              return <em key={idx}>{p.slice(1, -1)}</em>;
-            }
-            return p;
-          })}
-        </p>
-      );
-    });
-  };
-
   return (
     <div className="ai-assistant-container">
       {/* Top Header Card */}
@@ -274,7 +252,7 @@ export default function AiAssistantView({ activeTemporada, authFetch, API_URL })
 
               {/* Message Body */}
               <div className="ai-bubble-text">
-                {renderFormattedText(msg.texto)}
+                <MarkdownRenderer content={msg.texto} isUser={msg.rol === 'user'} />
               </div>
 
               {/* Tool Execution Badges */}

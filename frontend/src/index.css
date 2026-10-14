@@ -1124,6 +1124,7 @@ body {
   color: #ffffff;
   border-radius: 14px 4px 14px 14px;
   box-shadow: 0 2px 8px rgba(34, 43, 64, 0.2);
+  max-width: 80%;
 }
 
 .bot-bubble {
@@ -1132,6 +1133,119 @@ body {
   border: 1px solid #e2e8f0;
   border-radius: 4px 14px 14px 14px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  max-width: 88%;
+  min-width: 280px;
+}
+
+/* Markdown Rendering Styles in Chat */
+.ai-markdown-content {
+  line-height: 1.6;
+  font-size: 0.88rem;
+}
+
+.ai-markdown-p {
+  margin: 6px 0 10px;
+  line-height: 1.6;
+}
+
+.ai-markdown-h1, .ai-markdown-h2, .ai-markdown-h3, .ai-markdown-h4 {
+  color: #1e293b;
+  font-weight: 700;
+  margin: 14px 0 8px;
+  line-height: 1.35;
+}
+
+.ai-markdown-h1 { font-size: 1.15rem; }
+.ai-markdown-h2 { font-size: 1.05rem; }
+.ai-markdown-h3 { font-size: 0.98rem; }
+.ai-markdown-h4 { font-size: 0.90rem; }
+
+.ai-markdown-hr {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 16px 0;
+}
+
+.ai-markdown-ul, .ai-markdown-ol {
+  margin: 8px 0 12px;
+  padding-left: 22px;
+}
+
+.ai-markdown-ul li, .ai-markdown-ol li {
+  margin-bottom: 6px;
+  line-height: 1.55;
+}
+
+.ai-inline-code {
+  background: #f1f5f9;
+  color: #2563eb;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+  border: 1px solid #e2e8f0;
+}
+
+.ai-bold-text {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+/* User Bubble Markdown overrides */
+.user-markdown {
+  color: #ffffff;
+}
+
+.user-markdown .ai-bold-text {
+  color: #ffffff;
+}
+
+.user-markdown .ai-inline-code {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Responsive Table Styling */
+.ai-table-responsive-wrapper {
+  overflow-x: auto;
+  margin: 12px 0 14px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.ai-markdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  min-width: 520px;
+}
+
+.ai-markdown-table th {
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 700;
+  padding: 10px 14px;
+  border-bottom: 2px solid #cbd5e1;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.ai-markdown-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.ai-markdown-table tbody tr:nth-child(even) td {
+  background-color: #fafbfc;
+}
+
+.ai-markdown-table tbody tr:hover td {
+  background-color: #f1f5f9;
 }
 
 .ai-bubble-header {
