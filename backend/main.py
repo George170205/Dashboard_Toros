@@ -58,7 +58,7 @@ ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS", "")
 
 allowed_origins_list = []
 if ALLOWED_ORIGINS_ENV:
-    allowed_origins_list.extend([o.strip() for o in ALLOWED_ORIGINS_ENV.split(",") if o.strip()])
+    allowed_origins_list.extend([o.strip().rstrip("/") for o in ALLOWED_ORIGINS_ENV.split(",") if o.strip()])
 
 # Include localhost only in development or if ALLOWED_ORIGINS was not explicitly set
 if ENVIRONMENT in ("development", "dev", "local") or not ALLOWED_ORIGINS_ENV:
