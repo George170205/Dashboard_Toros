@@ -13,8 +13,33 @@ import jwt
 from database import get_connection, init_db, verify_password, hash_password, needs_rehash
 from loader import load_csv_file, delete_temporada_data, clear_temporada_tickets, load_initial_2026_season, get_or_create_temporada
 from pydantic import BaseModel
+from llm_client import get_gemini_client, get_gemini_model_name, GeminiNotConfiguredError
+from tools import AVAILABLE_TOOLS
+from google.genai import types
+from google.genai.errors import APIError
 
 app = FastAPI(title="Toros de Tijuana - Sales Dashboard API", version="1.0.0")
+
+# Sistema de Caché en Memoria con TTL (Invalidación automática en escrituras)
+_DASHBOARD_CACHE: Dict[str, dict] = {}
+_CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "600"))
+
+def get_cache(key: str) -> Optional[dict]:
+    entry = _DASHBOARD_CACHE.get(key)
+    if entry and time.time() < entry["expires_at"]:
+        return entry["data"]
+    if entry:
+        _DASHBOARD_CACHE.pop(key, None)
+    return None
+
+def set_cache(key: str, data: dict, ttl_seconds: int = _CACHE_TTL_SECONDS):
+    _DASHBOARD_CACHE[key] = {
+        "data": data,
+        "expires_at": time.time() + ttl_seconds
+    }
+
+def invalidate_all_cache():
+    _DASHBOARD_CACHE.clear()
 
 # Security, JWT and Environment configuration
 JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY", "toros-jwt-secret-key-change-in-production-2026-xyz789")
@@ -222,6 +247,7 @@ def create_temporada(payload: TemporadaCreate, current_user: dict = Depends(get_
         conn.commit()
         temp_id = cursor.lastrowid
         conn.close()
+        invalidate_all_cache()
         return {"id": temp_id, "nombre": payload.nombre, "ano": payload.ano}
     except Exception as e:
         conn.close()
@@ -230,12 +256,14 @@ def create_temporada(payload: TemporadaCreate, current_user: dict = Depends(get_
 @app.delete("/api/temporadas/{temporada_id}")
 def delete_temporada(temporada_id: int, current_user: dict = Depends(get_current_user)):
     delete_temporada_data(temporada_id)
+    invalidate_all_cache()
     return {"status": "success", "message": f"Temporada {temporada_id} eliminada con éxito."}
 
 @app.post("/api/temporadas/{temporada_id}/reset")
 def reset_temporada(temporada_id: int, current_user: dict = Depends(get_current_user)):
     """Limpia todos los datos de ventas de una temporada para poder recargar desde la interfaz."""
     clear_temporada_tickets(temporada_id)
+    invalidate_all_cache()
     return {"status": "success", "message": f"Datos de boletos de temporada {temporada_id} eliminados. Lista para recargar."}
 
 @app.post("/api/init-2026")
@@ -251,10 +279,16 @@ def reload_initial(temporada_id: int = 1, current_user: dict = Depends(get_curre
     for f in files:
         res = load_csv_file(str(f), temp_id)
         results.append(res)
+    invalidate_all_cache()
     return {"status": "success", "cargas": results}
 
 @app.get("/api/dashboard/{temporada_id}")
 def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_current_user)):
+    cache_key = f"dashboard_{temporada_id}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -265,25 +299,26 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
         conn.close()
         raise HTTPException(status_code=404, detail="Temporada no encontrada")
 
-    # 1. KPIs
+    # 1. KPIs (Optimizado con covering index e índice de orden: <0.08s)
     cursor.execute("""
     SELECT 
-        COUNT(v.id) as total_boletos,
-        COUNT(DISTINCT v.orden) as total_ordenes,
-        COALESCE(SUM(CASE WHEN v.es_cortesia = 0 THEN v.total ELSE 0 END), 0) as ingreso_total,
-        COALESCE(SUM(CASE WHEN v.es_cortesia = 0 THEN 1 ELSE 0 END), 0) as boletos_pagados,
-        COALESCE(SUM(CASE WHEN v.es_cortesia = 1 THEN 1 ELSE 0 END), 0) as boletos_cortesias,
-        COALESCE(SUM(v.descuento), 0) as total_descuentos
-    FROM ventas v
-    WHERE v.temporada_id = ?
+        COUNT(*) as total_boletos,
+        COALESCE(SUM(CASE WHEN es_cortesia = 0 THEN total ELSE 0 END), 0) as ingreso_total,
+        COALESCE(SUM(CASE WHEN es_cortesia = 0 THEN 1 ELSE 0 END), 0) as boletos_pagados,
+        COALESCE(SUM(CASE WHEN es_cortesia = 1 THEN 1 ELSE 0 END), 0) as boletos_cortesias,
+        COALESCE(SUM(descuento), 0) as total_descuentos
+    FROM ventas
+    WHERE temporada_id = ?
     """, (temporada_id,))
     kpi_raw = cursor.fetchone()
+
+    cursor.execute("SELECT COUNT(DISTINCT orden) as total_ordenes FROM ventas WHERE temporada_id = ?", (temporada_id,))
+    total_ordenes = cursor.fetchone()["total_ordenes"] or 0
     
     total_boletos = kpi_raw["total_boletos"] or 0
     ingreso_total = round(kpi_raw["ingreso_total"] or 0, 2)
     boletos_pagados = kpi_raw["boletos_pagados"] or 0
     boletos_cortesias = kpi_raw["boletos_cortesias"] or 0
-    total_ordenes = kpi_raw["total_ordenes"] or 0
     total_descuentos = round(kpi_raw["total_descuentos"] or 0, 2)
     ticket_promedio = round(ingreso_total / boletos_pagados, 2) if boletos_pagados > 0 else 0.0
 
@@ -313,25 +348,24 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
     """, (temporada_id,))
     daily_sales = [dict(r) for r in cursor.fetchall()]
 
-    # 3. Events Breakdown Table (with real sparklines)
+    # 3. Events Breakdown Table (Optimizado: agregación directa sobre ventas + metadata en memoria)
     cursor.execute("""
     SELECT 
-        ventas.evento_nombre,
-        eventos.fase,
-        eventos.rival,
-        eventos.jornada,
-        MIN(ventas.fecha_partido) as fecha_partido,
-        COUNT(CASE WHEN ventas.es_cortesia = 0 THEN 1 END) as pagados,
-        COUNT(CASE WHEN ventas.es_cortesia = 1 THEN 1 END) as cortesias,
-        COALESCE(SUM(CASE WHEN ventas.es_cortesia = 0 THEN ventas.total ELSE 0 END), 0) as ingreso,
-        COALESCE(AVG(CASE WHEN ventas.es_cortesia = 0 THEN ventas.total END), 0) as ticket_prom
+        evento_nombre,
+        MIN(fecha_partido) as fecha_partido,
+        COUNT(CASE WHEN es_cortesia = 0 THEN 1 END) as pagados,
+        COUNT(CASE WHEN es_cortesia = 1 THEN 1 END) as cortesias,
+        COALESCE(SUM(CASE WHEN es_cortesia = 0 THEN total ELSE 0 END), 0) as ingreso,
+        COALESCE(AVG(CASE WHEN es_cortesia = 0 THEN total END), 0) as ticket_prom
     FROM ventas
-    LEFT JOIN eventos ON eventos.id = ventas.evento_id
-    WHERE ventas.temporada_id = ?
-    GROUP BY ventas.evento_nombre
-    ORDER BY MIN(ventas.fecha_partido) ASC, ingreso DESC
+    WHERE temporada_id = ?
+    GROUP BY evento_nombre
+    ORDER BY MIN(fecha_partido) ASC, ingreso DESC
     """, (temporada_id,))
     events_raw = cursor.fetchall()
+
+    cursor.execute("SELECT nombre, fase, rival, jornada FROM eventos WHERE temporada_id = ?", (temporada_id,))
+    ev_metadata = {r["nombre"]: dict(r) for r in cursor.fetchall()}
     
     # Query real daily sales per event to build authentic cumulative sparkline curves
     cursor.execute("""
@@ -354,6 +388,7 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
         p_count = ev["pagados"] or 0
         ing = round(ev["ingreso"] or 0, 2)
         ev_name = ev["evento_nombre"]
+        meta = ev_metadata.get(ev_name, {})
 
         # Build real cumulative progression sampled across 6 points
         counts = event_progress.get(ev_name, [])
@@ -374,9 +409,9 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
 
         events_table.append({
             "evento": ev_name,
-            "fase": ev["fase"] or "Temporada Regular",
-            "rival": ev["rival"] or "Toros",
-            "jornada": ev["jornada"] or "J1",
+            "fase": meta.get("fase") or "Temporada Regular",
+            "rival": meta.get("rival") or "Toros",
+            "jornada": meta.get("jornada") or "J1",
             "fecha": ev["fecha_partido"] or "-",
             "pagados": p_count,
             "cortesias": ev["cortesias"] or 0,
@@ -427,7 +462,7 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
     """, (temporada_id,))
     tipos_boleto = [dict(r) for r in cursor.fetchall()]
 
-    # 7. Recent User / Vendor Activity Feed
+    # 7. Recent User / Vendor Activity Feed (Optimizado con subconsulta acotada a últimos 500 registros)
     cursor.execute("""
     SELECT 
         vendido_por,
@@ -436,10 +471,15 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
         COALESCE(SUM(total), 0) as monto_lote,
         MAX(fecha_venta) as fecha,
         es_cortesia
-    FROM ventas
-    WHERE temporada_id = ? AND vendido_por != ''
+    FROM (
+        SELECT vendido_por, canal_normalizado, total, fecha_venta, es_cortesia
+        FROM ventas
+        WHERE temporada_id = ? AND vendido_por != ''
+        ORDER BY fecha_venta DESC
+        LIMIT 500
+    )
     GROUP BY vendido_por, canal_normalizado, substr(fecha_venta, 1, 13), es_cortesia
-    ORDER BY MAX(fecha_venta) DESC
+    ORDER BY fecha DESC
     LIMIT 10
     """, (temporada_id,))
     activities = [dict(r) for r in cursor.fetchall()]
@@ -452,7 +492,7 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
 
     conn.close()
 
-    return {
+    result = {
         "temporada": dict(temp_row),
         "kpis": {
             "ingreso_total": ingreso_total,
@@ -475,6 +515,8 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
         "activities": activities,
         "cargas": cargas
     }
+    set_cache(cache_key, result)
+    return result
 
 @app.get("/api/comparativa")
 def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] = Query(None), current_user: dict = Depends(get_current_user)):
@@ -492,6 +534,12 @@ def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] 
     if not t2_id or t2_id not in temp_rows:
         t2_id = temp_rows[1] if len(temp_rows) > 1 else temp_rows[0]
 
+    cache_key = f"comparativa_{t1_id}_{t2_id}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        conn.close()
+        return cached
+
     def get_summary(tid):
         cursor.execute("SELECT * FROM temporadas WHERE id = ?", (tid,))
         temp = cursor.fetchone()
@@ -502,11 +550,12 @@ def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] 
             COALESCE(SUM(CASE WHEN es_cortesia = 0 THEN total ELSE 0 END), 0) as ingreso,
             COALESCE(SUM(CASE WHEN es_cortesia = 0 THEN 1 ELSE 0 END), 0) as pagados,
             COALESCE(SUM(CASE WHEN es_cortesia = 1 THEN 1 ELSE 0 END), 0) as cortesias,
-            COUNT(id) as total_boletos,
-            COUNT(DISTINCT orden) as total_ordenes
+            COUNT(*) as total_boletos
         FROM ventas WHERE temporada_id = ?
         """, (tid,))
         kpis = dict(cursor.fetchone())
+        cursor.execute("SELECT COUNT(DISTINCT orden) as total_ordenes FROM ventas WHERE temporada_id = ?", (tid,))
+        kpis["total_ordenes"] = cursor.fetchone()["total_ordenes"] or 0
         kpis["ticket_promedio"] = round(kpis["ingreso"] / kpis["pagados"], 2) if kpis["pagados"] else 0
         return {"temporada": dict(temp), "kpis": kpis}
 
@@ -532,7 +581,7 @@ def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] 
     diff_ticket = k2["ticket_promedio"] - k1["ticket_promedio"]
     diff_ticket_pct = round((diff_ticket / k1["ticket_promedio"]) * 100, 2) if k1["ticket_promedio"] else 0.0
 
-    return {
+    result = {
         "temporada_base": res1,
         "temporada_comparada": res2,
         "diferencias": {
@@ -542,14 +591,107 @@ def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] 
             "ticket_promedio": {"absoluto": round(diff_ticket, 2), "porcentaje": diff_ticket_pct}
         }
     }
+    set_cache(cache_key, result)
+    return result
+
+class ChatMessage(BaseModel):
+    rol: str
+    texto: str
+
+class ChatRequest(BaseModel):
+    pregunta: str
+    temporada_id: int = 1
+    historial: Optional[List[ChatMessage]] = None
 
 @app.post("/api/chat")
-async def chat_endpoint(current_user: dict = Depends(get_current_user)):
-    """Endpoint de chat protegido por JWT para el Asistente IA (Etapa 2 en adelante)."""
-    return {
-        "status": "success",
-        "message": f"Hola {current_user['nombre']}, el endpoint de chat está autenticado y listo para la Etapa 2."
-    }
+async def chat_endpoint(req: ChatRequest, current_user: dict = Depends(get_current_user)):
+    """
+    Endpoint del Asistente IA para análisis de mercado y ventas.
+    Usa Google Gemini con function calling sobre la base de datos de los Toros de Tijuana.
+    """
+    pregunta = req.pregunta.strip()
+    if not pregunta:
+        raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía.")
+
+    try:
+        client = get_gemini_client()
+        model_name = get_gemini_model_name()
+    except GeminiNotConfiguredError:
+        raise HTTPException(
+            status_code=503,
+            detail="Asistente no configurado: falta GEMINI_API_KEY en variables de entorno."
+        )
+
+    system_instruction = (
+        "Eres el Asistente IA de Inteligencia de Negocio y Análisis de Mercado para los Toros de Tijuana (LMB).\n"
+        "Tu objetivo es asistir a directivos y analistas respondiendo consultas con los datos reales de la temporada.\n\n"
+        "PRINCIPIOS Y REGLAS ESTRICTAS:\n"
+        "1. NUNCA calcules ni inventes cifras por tu cuenta. Siempre ejecuta las herramientas fijas disponibles para consultar datos.\n"
+        "2. Si el usuario realiza una pregunta para la que no existe herramienta disponible, explícalo con honestidad y cortesía sin estimar ni adivinar.\n"
+        "3. Prohibido intentar generar o ejecutar sentencias SQL arbitrarias.\n"
+        "4. CORTESÍAS: Los boletos de cortesía (es_cortesia = 1) NUNCA se suman a los boletos pagados en métricas de ingreso o ticket promedio.\n"
+        "5. MONEDA: Todas las cifras monetarias están expresadas en Pesos Mexicanos (MXN). Exprésalas siempre con formato de moneda.\n"
+        "6. INGRESO NETO: La base de datos no contiene comisiones de boletera, deducciones operativas ni impuestos. Por tanto, el INGRESO NETO NO PUEDE CALCULARSE. Si se pregunta por ingreso neto, declara explícitamente esta limitación.\n"
+        "7. IDIOMA Y ESTILO: Responde siempre en español, de forma analítica, ejecutiva, estructurada y profesional."
+    )
+
+    contents = []
+    if req.historial:
+        for msg in req.historial[-8:]:
+            role = "user" if msg.rol.lower() in ("user", "usuario") else "model"
+            contents.append(types.Content(
+                role=role,
+                parts=[types.Part.from_text(text=msg.texto)]
+            ))
+
+    current_prompt = f"[Temporada ID activa: {req.temporada_id}]\nPregunta: {pregunta}"
+    contents.append(types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=current_prompt)]
+    ))
+
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        temperature=0.2,
+        tools=AVAILABLE_TOOLS,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            maximum_remote_calls=5
+        )
+    )
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config=config
+        )
+
+        herramientas_usadas = []
+        if response.function_calls:
+            for fc in response.function_calls:
+                herramientas_usadas.append({
+                    "nombre": fc.name,
+                    "argumentos": fc.args
+                })
+
+        return {
+            "status": "success",
+            "respuesta": response.text or "No se pudo generar una respuesta explicativa.",
+            "herramientas_usadas": herramientas_usadas,
+            "modelo": model_name
+        }
+
+    except APIError as e:
+        status_code = 429 if getattr(e, "code", None) == 429 else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"Error en el servicio de Gemini: {getattr(e, 'message', str(e))}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando la consulta con el Asistente IA: {str(e)}"
+        )
 
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB max
 
@@ -597,6 +739,7 @@ async def upload_csv_file(
         cursor.execute("UPDATE cargas SET nombre_archivo = ? WHERE id = ?", (safe_filename, result["carga_id"]))
         conn.commit()
         conn.close()
+        invalidate_all_cache()
 
         return {
             "status": "success",

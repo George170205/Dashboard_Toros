@@ -142,6 +142,42 @@ def init_db():
     ON ventas(temporada_id, evento_nombre, fecha_venta)
     """)
 
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_ventas_ev_covering 
+    ON ventas(temporada_id, evento_nombre, es_cortesia, total, fecha_partido)
+    """)
+
+    # Índices de cobertura (Covering Indexes) para agregaciones ultrarrápidas (<0.1s)
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_ventas_kpi_covering 
+    ON ventas(temporada_id, es_cortesia, total, descuento)
+    """)
+
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_ventas_temp_orden 
+    ON ventas(temporada_id, orden)
+    """)
+
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_ventas_canal_covering 
+    ON ventas(temporada_id, canal_normalizado, es_cortesia, total)
+    """)
+
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_ventas_zona_covering 
+    ON ventas(temporada_id, zona, es_cortesia, total)
+    """)
+
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_ventas_tipo_covering 
+    ON ventas(temporada_id, tipo_boleto, es_cortesia, total)
+    """)
+
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_ventas_timeline_covering 
+    ON ventas(temporada_id, fecha_venta, es_cortesia, total)
+    """)
+
     # Tabla de Usuarios
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (

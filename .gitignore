@@ -5,6 +5,8 @@ __pycache__/
 
 # Environment & Builds
 .env
+!.env.example
+*.env.local
 dist/
 .vite/
 uploads/
