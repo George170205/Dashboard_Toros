@@ -13,28 +13,40 @@ def get_connection():
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
+import bcrypt
 import hashlib
 import hmac
-import secrets
 
 def hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
-    pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000).hex()
-    return f"{salt}${pw_hash}"
+    """Hashes a password using bcrypt with standard work factor."""
+    salt = bcrypt.gensalt(rounds=12)
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
 def verify_password(plain_password: str, hashed_value: str) -> bool:
+    """Verifies password against bcrypt, with fallback to legacy PBKDF2/SHA-256."""
     if not hashed_value or not plain_password:
         return False
-    if "$" in hashed_value:
+    # 1. Bcrypt verification
+    if hashed_value.startswith(("$2b$", "$2a$", "$2y$")):
+        try:
+            return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_value.encode('utf-8'))
+        except Exception:
+            return False
+    # 2. PBKDF2 fallback
+    if "$" in hashed_value and not hashed_value.startswith("$2"):
         try:
             salt, stored_hash = hashed_value.split("$", 1)
-            calculated = hashlib.pbkdf2_hmac("sha256", plain_password.encode(), salt.encode(), 100_000).hex()
+            calculated = hashlib.pbkdf2_hmac("sha256", plain_password.encode('utf-8'), salt.encode('utf-8'), 100_000).hex()
             return hmac.compare_digest(calculated, stored_hash)
         except Exception:
             return False
-    # Legacy SHA-256 fallback (without salt) to allow migration
-    legacy = hashlib.sha256(plain_password.encode()).hexdigest()
+    # 3. Plain legacy SHA-256 fallback
+    legacy = hashlib.sha256(plain_password.encode('utf-8')).hexdigest()
     return hmac.compare_digest(legacy, hashed_value)
+
+def needs_rehash(hashed_value: str) -> bool:
+    """Returns True if the hash should be upgraded to bcrypt."""
+    return not hashed_value.startswith(("$2b$", "$2a$", "$2y$"))
 
 def init_db():
     conn = get_connection()
@@ -163,10 +175,10 @@ def init_db():
             INSERT INTO usuarios (nombre, correo, username, password_hash, rol, avatar_color)
             VALUES (?, ?, ?, ?, ?, ?)
             """, (nombre, correo, username, pw_salted, rol, avatar))
-        elif "$" not in existing["password_hash"]:
-            # Upgrade legacy un-salted SHA-256 hash to PBKDF2 with unique salt
-            pw_salted = hash_password(default_pw_raw)
-            cursor.execute("UPDATE usuarios SET password_hash = ? WHERE id = ?", (pw_salted, existing["id"]))
+        elif needs_rehash(existing["password_hash"]):
+            # Upgrade legacy hash to modern bcrypt
+            pw_bcrypt = hash_password(default_pw_raw)
+            cursor.execute("UPDATE usuarios SET password_hash = ? WHERE id = ?", (pw_bcrypt, existing["id"]))
 
     conn.commit()
     conn.close()

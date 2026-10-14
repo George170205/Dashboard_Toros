@@ -29,6 +29,12 @@ export default function ComparativaView({ temporadas = [], activeTemporada }) {
       const res = await fetch(`${API_URL}/api/comparativa?t1_id=${temp1Id}&t2_id=${temp2Id}`, {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
+      if (res.status === 401) {
+        localStorage.removeItem('toros_token');
+        localStorage.removeItem('toros_user');
+        window.location.reload();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setComparativa(data);

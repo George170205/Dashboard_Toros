@@ -5,63 +5,63 @@ import os
 import shutil
 import tempfile
 import time
-import hmac
-import hashlib
-import secrets
 import uuid
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from pathlib import Path
-from database import get_connection, init_db, verify_password, hash_password
+import jwt
+from database import get_connection, init_db, verify_password, hash_password, needs_rehash
 from loader import load_csv_file, delete_temporada_data, clear_temporada_tickets, load_initial_2026_season, get_or_create_temporada
 from pydantic import BaseModel
 
 app = FastAPI(title="Toros de Tijuana - Sales Dashboard API", version="1.0.0")
 
-# Security and Environment configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "toros-secret-security-key-2026-prod")
+# Security, JWT and Environment configuration
+JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY", "toros-jwt-secret-key-change-in-production-2026-xyz789")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
+
+ENVIRONMENT = os.getenv("ENVIRONMENT", "production").lower()
 ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS", "")
 
-if ALLOWED_ORIGINS_ENV and ALLOWED_ORIGINS_ENV != "*":
-    origins = [o.strip() for o in ALLOWED_ORIGINS_ENV.split(",") if o.strip()]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+allowed_origins_list = []
+if ALLOWED_ORIGINS_ENV:
+    allowed_origins_list.extend([o.strip() for o in ALLOWED_ORIGINS_ENV.split(",") if o.strip()])
 
-# Token generation and verification
-def create_access_token(user_id: int, username: str, expires_in_seconds: int = 86400 * 7) -> str:
-    exp = int(time.time()) + expires_in_seconds
-    nonce = secrets.token_hex(8)
-    payload = f"{user_id}:{username}:{exp}:{nonce}"
-    sig = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    return f"{payload}:{sig}"
+# Include localhost only in development or if ALLOWED_ORIGINS was not explicitly set
+if ENVIRONMENT in ("development", "dev", "local") or not ALLOWED_ORIGINS_ENV:
+    allowed_origins_list.extend([
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ])
 
-def verify_access_token(token: str) -> Optional[dict]:
-    try:
-        parts = token.strip().split(":")
-        if len(parts) != 5:
-            return None
-        user_id_str, username, exp_str, nonce, sig = parts
-        payload = f"{user_id_str}:{username}:{exp_str}:{nonce}"
-        expected_sig = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected_sig):
-            return None
-        if int(exp_str) < int(time.time()):
-            return None
-        return {"user_id": int(user_id_str), "username": username}
-    except Exception:
-        return None
+# Remove duplicates while preserving order
+allowed_origins = list(dict.fromkeys(allowed_origins_list))
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+# JWT generation and verification
+def create_access_token(user_id: int, username: str, rol: str = "Administrador") -> str:
+    now = datetime.now(timezone.utc)
+    exp = now + timedelta(hours=JWT_EXPIRATION_HOURS)
+    payload = {
+        "sub": str(user_id),
+        "username": username,
+        "rol": rol,
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp())
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization:
@@ -70,13 +70,21 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if len(parts) != 2 or parts[0].lower() != "bearer":
         raise HTTPException(status_code=401, detail="Formato de token inválido. Use 'Bearer <token>'")
     token = parts[1]
-    payload = verify_access_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Token inválido o expirado")
     
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="El token ha expirado. Inicia sesión nuevamente.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido o corrupto.")
+    
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Identificador de usuario ausente en token")
+
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT id, nombre, correo, username, rol, avatar_color FROM usuarios WHERE id = ?", (payload["user_id"],))
+    c.execute("SELECT id, nombre, correo, username, rol, avatar_color FROM usuarios WHERE id = ?", (int(user_id),))
     user = c.fetchone()
     conn.close()
     if not user:
@@ -132,10 +140,10 @@ def login(req: LoginRequest, request: Request):
         record_failed_login(rate_key)
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
 
-    # Migrate legacy un-salted hash if present
-    if "$" not in user["password_hash"]:
-        new_salted = hash_password(req.password)
-        cursor.execute("UPDATE usuarios SET password_hash = ? WHERE id = ?", (new_salted, user["id"]))
+    # Transparent rehash to bcrypt if legacy hash
+    if needs_rehash(user["password_hash"]):
+        new_bcrypt = hash_password(req.password)
+        cursor.execute("UPDATE usuarios SET password_hash = ? WHERE id = ?", (new_bcrypt, user["id"]))
         conn.commit()
 
     conn.close()
@@ -149,7 +157,7 @@ def login(req: LoginRequest, request: Request):
         "rol": user["rol"],
         "avatar_color": user["avatar_color"]
     }
-    token = create_access_token(user["id"], user["username"])
+    token = create_access_token(user["id"], user["username"], user["rol"])
     return {
         "status": "success",
         "user": user_dict,
@@ -183,7 +191,7 @@ def health_check():
     return {"status": "ok", "service": "Toros Sales API"}
 
 @app.get("/api/temporadas")
-def list_temporadas():
+def list_temporadas(current_user: dict = Depends(get_current_user)):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -246,7 +254,7 @@ def reload_initial(temporada_id: int = 1, current_user: dict = Depends(get_curre
     return {"status": "success", "cargas": results}
 
 @app.get("/api/dashboard/{temporada_id}")
-def get_dashboard_data(temporada_id: int):
+def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_current_user)):
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -469,7 +477,7 @@ def get_dashboard_data(temporada_id: int):
     }
 
 @app.get("/api/comparativa")
-def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] = Query(None)):
+def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] = Query(None), current_user: dict = Depends(get_current_user)):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id FROM temporadas ORDER BY ano DESC, id DESC")
@@ -533,6 +541,14 @@ def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] 
             "cortesias": {"absoluto": diff_cortesias, "porcentaje": diff_cortesias_pct},
             "ticket_promedio": {"absoluto": round(diff_ticket, 2), "porcentaje": diff_ticket_pct}
         }
+    }
+
+@app.post("/api/chat")
+async def chat_endpoint(current_user: dict = Depends(get_current_user)):
+    """Endpoint de chat protegido por JWT para el Asistente IA (Etapa 2 en adelante)."""
+    return {
+        "status": "success",
+        "message": f"Hola {current_user['nombre']}, el endpoint de chat está autenticado y listo para la Etapa 2."
     }
 
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB max

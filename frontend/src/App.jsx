@@ -39,6 +39,19 @@ export default function App() {
     return token ? { 'Authorization': `Bearer ${token}` } : {};
   };
 
+  const authFetch = async (url, options = {}) => {
+    const headers = {
+      ...getAuthHeaders(),
+      ...(options.headers || {})
+    };
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+      handleLogout();
+      throw new Error('Sesión expirada o no autorizada. Inicia sesión nuevamente.');
+    }
+    return res;
+  };
+
   // Fetch seasons
   useEffect(() => {
     fetchTemporadas();
@@ -46,13 +59,7 @@ export default function App() {
 
   const fetchTemporadas = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/temporadas`, {
-        headers: { ...getAuthHeaders() }
-      });
-      if (res.status === 401) {
-        handleLogout();
-        return [];
-      }
+      const res = await authFetch(`${API_URL}/api/temporadas`);
       if (res.ok) {
         const data = await res.json();
         setTemporadas(data);
@@ -83,13 +90,7 @@ export default function App() {
     if (!temporadaId) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/dashboard/${temporadaId}`, {
-        headers: { ...getAuthHeaders() }
-      });
-      if (res.status === 401) {
-        handleLogout();
-        return;
-      }
+      const res = await authFetch(`${API_URL}/api/dashboard/${temporadaId}`);
       if (res.ok) {
         const data = await res.json();
         setDashboardData(data);
@@ -105,11 +106,10 @@ export default function App() {
   const handleCreateSeason = async (seasonData) => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/temporadas`, {
+      const res = await authFetch(`${API_URL}/api/temporadas`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...getAuthHeaders(),
         },
         body: JSON.stringify(seasonData),
       });
@@ -145,9 +145,8 @@ export default function App() {
           targetId = temporadas[0].id;
         } else {
           // Initialize first
-          const initRes = await fetch(`${API_URL}/api/init-2026`, { 
+          const initRes = await authFetch(`${API_URL}/api/init-2026`, { 
             method: 'POST',
-            headers: { ...getAuthHeaders() }
           });
           const initData = await initRes.json();
           const refreshed = await fetchTemporadas();
@@ -159,9 +158,8 @@ export default function App() {
       formData.append('temporada_id', targetId);
       formData.append('file', file);
 
-      const res = await fetch(`${API_URL}/api/cargas/upload`, {
+      const res = await authFetch(`${API_URL}/api/cargas/upload`, {
         method: 'POST',
-        headers: { ...getAuthHeaders() },
         body: formData,
       });
 
@@ -187,9 +185,8 @@ export default function App() {
     if (!activeTemporada?.id) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/temporadas/${activeTemporada.id}/reset`, {
+      const res = await authFetch(`${API_URL}/api/temporadas/${activeTemporada.id}/reset`, {
         method: 'POST',
-        headers: { ...getAuthHeaders() },
       });
       if (res.ok) {
         await fetchDashboardData(activeTemporada.id);
@@ -210,9 +207,8 @@ export default function App() {
         ? `${API_URL}/api/temporadas/${activeTemporada.id}/reload-initial`
         : `${API_URL}/api/init-2026`;
 
-      const res = await fetch(url, {
+      const res = await authFetch(url, {
         method: 'POST',
-        headers: { ...getAuthHeaders() },
       });
       
       const refreshedTemps = await fetchTemporadas();
