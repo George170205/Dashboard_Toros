@@ -34,6 +34,11 @@ export default function App() {
   const [showCreateSeasonModal, setShowCreateSeasonModal] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem('toros_token');
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
+  };
+
   // Fetch seasons
   useEffect(() => {
     fetchTemporadas();
@@ -41,7 +46,13 @@ export default function App() {
 
   const fetchTemporadas = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/temporadas`);
+      const res = await fetch(`${API_URL}/api/temporadas`, {
+        headers: { ...getAuthHeaders() }
+      });
+      if (res.status === 401) {
+        handleLogout();
+        return [];
+      }
       if (res.ok) {
         const data = await res.json();
         setTemporadas(data);
@@ -72,7 +83,13 @@ export default function App() {
     if (!temporadaId) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/dashboard/${temporadaId}`);
+      const res = await fetch(`${API_URL}/api/dashboard/${temporadaId}`, {
+        headers: { ...getAuthHeaders() }
+      });
+      if (res.status === 401) {
+        handleLogout();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setDashboardData(data);
@@ -92,6 +109,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAuthHeaders(),
         },
         body: JSON.stringify(seasonData),
       });
@@ -127,7 +145,10 @@ export default function App() {
           targetId = temporadas[0].id;
         } else {
           // Initialize first
-          const initRes = await fetch(`${API_URL}/api/init-2026`, { method: 'POST' });
+          const initRes = await fetch(`${API_URL}/api/init-2026`, { 
+            method: 'POST',
+            headers: { ...getAuthHeaders() }
+          });
           const initData = await initRes.json();
           const refreshed = await fetchTemporadas();
           targetId = refreshed[0]?.id || 1;
@@ -140,6 +161,7 @@ export default function App() {
 
       const res = await fetch(`${API_URL}/api/cargas/upload`, {
         method: 'POST',
+        headers: { ...getAuthHeaders() },
         body: formData,
       });
 
@@ -167,6 +189,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/api/temporadas/${activeTemporada.id}/reset`, {
         method: 'POST',
+        headers: { ...getAuthHeaders() },
       });
       if (res.ok) {
         await fetchDashboardData(activeTemporada.id);
@@ -189,6 +212,7 @@ export default function App() {
 
       const res = await fetch(url, {
         method: 'POST',
+        headers: { ...getAuthHeaders() },
       });
       
       const refreshedTemps = await fetchTemporadas();

@@ -54,7 +54,7 @@ export default function KpiCards({ kpis }) {
         </div>
         <div className="kpi-footer">
           <Clock size={13} />
-          <span>83.9% del aforo emitido</span>
+          <span>{kpis?.aforo_promedio_pct != null ? `${kpis.aforo_promedio_pct}% del aforo emitido` : 'Aforo por partido'}</span>
         </div>
       </div>
 

@@ -1,0 +1,19 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLite Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+toros_dashboard.db*
+
+# Uploads directory
+uploads/
+
+# Environment variables
+.env
+.env.*

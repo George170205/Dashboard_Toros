@@ -32,29 +32,32 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
   const chartW = width - paddingX * 2;
   const chartH = height - paddingY * 2;
 
-  const { points1, points2, path1, path2, area1, maxVal1, maxVal2 } = useMemo(() => {
+  const { points1, points2, path1, path2, area1, area2, maxVal1, maxVal2 } = useMemo(() => {
     if (sampledData.length === 0) {
-      return { points1: [], points2: [], path1: '', path2: '', area1: '', maxVal1: 1, maxVal2: 1 };
+      return { points1: [], points2: [], path1: '', path2: '', area1: '', area2: '', maxVal1: 1, maxVal2: 1 };
     }
 
     const max1 = Math.max(...sampledData.map(d => d.ingreso), 1);
     const max2 = Math.max(...sampledData.map(d => d.pagados), 1);
 
     const pts1 = sampledData.map((d, i) => {
-      const x = paddingX + (i / (sampledData.length - 1)) * chartW;
+      const x = sampledData.length > 1 ? paddingX + (i / (sampledData.length - 1)) * chartW : paddingX + chartW / 2;
       const y = paddingY + chartH - (d.ingreso / max1) * chartH;
       return { x, y, data: d };
     });
 
     const pts2 = sampledData.map((d, i) => {
-      const x = paddingX + (i / (sampledData.length - 1)) * chartW;
+      const x = sampledData.length > 1 ? paddingX + (i / (sampledData.length - 1)) * chartW : paddingX + chartW / 2;
       const y = paddingY + chartH - (d.pagados / max2) * chartH;
       return { x, y, data: d };
     });
 
     // Helper for smooth bezier curve
     const buildBezier = (pts) => {
-      if (pts.length < 2) return '';
+      if (pts.length < 1) return '';
+      if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
+      if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+
       let d = `M ${pts[0].x} ${pts[0].y}`;
       for (let i = 0; i < pts.length - 1; i++) {
         const p0 = pts[i === 0 ? 0 : i - 1];
@@ -76,16 +79,18 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
     const p1Path = buildBezier(pts1);
     const p2Path = buildBezier(pts2);
 
-    const areaPath = p1Path 
-      ? `${p1Path} L ${pts1[pts1.length - 1].x} ${paddingY + chartH} L ${pts1[0].x} ${paddingY + chartH} Z`
-      : '';
+    const buildArea = (pts, path) => {
+      if (!path || pts.length < 2) return '';
+      return `${path} L ${pts[pts.length - 1].x} ${paddingY + chartH} L ${pts[0].x} ${paddingY + chartH} Z`;
+    };
 
     return {
       points1: pts1,
       points2: pts2,
       path1: p1Path,
       path2: p2Path,
-      area1: areaPath,
+      area1: buildArea(pts1, p1Path),
+      area2: buildArea(pts2, p2Path),
       maxVal1: max1,
       maxVal2: max2
     };
@@ -98,7 +103,11 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
       <div className="card-header-row">
         <div className="card-title-group">
           <h3>Sales Analytics</h3>
-          <div className="card-subtitle">Evolución de ventas por fecha de partido y cortes de taquilla</div>
+          <div className="card-subtitle">
+            {metricMode === 'ingreso' 
+              ? 'Evolución de ingresos diarios ($ MXN)' 
+              : 'Evolución de volumen de boletos pagados'}
+          </div>
         </div>
 
         <div className="card-actions">
@@ -124,9 +133,13 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
           style={{ width: '100%', height: '100%', overflow: 'visible' }}
         >
           <defs>
-            <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#fe5d70" stopOpacity="0.25" />
+            <linearGradient id="areaGradientOrange" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#fe5d70" stopOpacity="0.28" />
               <stop offset="100%" stopColor="#fe5d70" stopOpacity="0.0" />
+            </linearGradient>
+            <linearGradient id="areaGradientCyan" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#01a9ac" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="#01a9ac" stopOpacity="0.0" />
             </linearGradient>
             <linearGradient id="lineGradOrange" x1="0" y1="0" x2="1" y2="0">
               <stop offset="0%" stopColor="#fe9365" />
@@ -134,7 +147,7 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
             </linearGradient>
             <linearGradient id="lineGradCyan" x1="0" y1="0" x2="1" y2="0">
               <stop offset="0%" stopColor="#01a9ac" />
-              <stop offset="100%" stopColor="#01dbdf" />
+              <stop offset="100%" stopColor="#0ac282" />
             </linearGradient>
           </defs>
 
@@ -155,8 +168,13 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
             );
           })}
 
-          {/* Fill Area for primary metric */}
-          {area1 && <path d={area1} fill="url(#areaGradient)" />}
+          {/* Fill Area for primary selected metric */}
+          {metricMode === 'ingreso' && area1 && (
+            <path d={area1} fill="url(#areaGradientOrange)" style={{ transition: 'opacity 0.4s ease' }} />
+          )}
+          {metricMode === 'boletos' && area2 && (
+            <path d={area2} fill="url(#areaGradientCyan)" style={{ transition: 'opacity 0.4s ease' }} />
+          )}
 
           {/* Cyan Line: Boletos / Pagados */}
           {path2 && (
@@ -164,8 +182,11 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
               d={path2} 
               fill="none" 
               stroke="url(#lineGradCyan)" 
-              strokeWidth="2.5" 
+              strokeWidth={metricMode === 'boletos' ? '3.5' : '1.8'} 
+              strokeOpacity={metricMode === 'boletos' ? '1.0' : '0.45'}
+              strokeDasharray={metricMode === 'boletos' ? 'none' : '4 4'}
               strokeLinecap="round" 
+              style={{ transition: 'stroke-width 0.3s ease, stroke-opacity 0.3s ease' }}
             />
           )}
 
@@ -175,14 +196,18 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
               d={path1} 
               fill="none" 
               stroke="url(#lineGradOrange)" 
-              strokeWidth="3.2" 
+              strokeWidth={metricMode === 'ingreso' ? '3.5' : '1.8'} 
+              strokeOpacity={metricMode === 'ingreso' ? '1.0' : '0.45'}
+              strokeDasharray={metricMode === 'ingreso' ? 'none' : '4 4'}
               strokeLinecap="round" 
+              style={{ transition: 'stroke-width 0.3s ease, stroke-opacity 0.3s ease' }}
             />
           )}
 
-          {/* Interactive Dots and hover trigger */}
-          {points1.map((pt, i) => {
+          {/* Interactive Dots and hover trigger (using active metric points) */}
+          {(metricMode === 'ingreso' ? points1 : points2).map((pt, i) => {
             const isHovered = hoveredIndex === i;
+            const primaryColor = metricMode === 'ingreso' ? '#fe5d70' : '#01a9ac';
             return (
               <g 
                 key={i} 
@@ -193,13 +218,13 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
                 {/* Invisible hover area */}
                 <circle cx={pt.x} cy={pt.y} r="16" fill="transparent" />
                 {/* Visible dot */}
-                {(isHovered || i % 6 === 0) && (
+                {(isHovered || i % 6 === 0 || sampledData.length <= 6) && (
                   <circle 
                     cx={pt.x} 
                     cy={pt.y} 
                     r={isHovered ? 6 : 4} 
                     fill="#ffffff" 
-                    stroke="#fe5d70" 
+                    stroke={primaryColor} 
                     strokeWidth="2.5" 
                   />
                 )}
@@ -222,11 +247,15 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
             boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
             pointerEvents: 'none'
           }}>
-            <div style={{ fontWeight: 600, color: '#fe9365', marginBottom: 2 }}>
+            <div style={{ fontWeight: 600, color: metricMode === 'ingreso' ? '#fe9365' : '#01a9ac', marginBottom: 2 }}>
               📅 Fecha: {activeHoverData.dia}
             </div>
-            <div>💰 Ingreso: {new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(activeHoverData.ingreso)}</div>
-            <div>🎟️ Boletos Pagados: {activeHoverData.pagados.toLocaleString()}</div>
+            <div style={{ fontWeight: metricMode === 'ingreso' ? 700 : 400 }}>
+              💰 Ingreso: {new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(activeHoverData.ingreso)}
+            </div>
+            <div style={{ fontWeight: metricMode === 'boletos' ? 700 : 400 }}>
+              🎟️ Boletos Pagados: {activeHoverData.pagados.toLocaleString()}
+            </div>
             <div>🎁 Cortesías: {activeHoverData.cortesias.toLocaleString()}</div>
           </div>
         )}
@@ -234,13 +263,13 @@ export default function SalesAnalyticsChart({ dailyData = [] }) {
 
       {/* Legend */}
       <div style={{ display: 'flex', gap: 20, justifyContent: 'center', marginTop: 12, fontSize: '0.78rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 12, height: 4, background: '#fe5d70', borderRadius: 2 }}></span>
-          <span style={{ color: '#555', fontWeight: 600 }}>Ingreso Recaudado ($ MXN)</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: metricMode === 'ingreso' ? 1 : 0.6 }}>
+          <span style={{ width: 14, height: 4, background: '#fe5d70', borderRadius: 2 }}></span>
+          <span style={{ color: '#555', fontWeight: metricMode === 'ingreso' ? 700 : 500 }}>Ingreso Recaudado ($ MXN)</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 12, height: 4, background: '#01a9ac', borderRadius: 2 }}></span>
-          <span style={{ color: '#555', fontWeight: 600 }}>Volumen de Boletos Pagados</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: metricMode === 'boletos' ? 1 : 0.6 }}>
+          <span style={{ width: 14, height: 4, background: '#01a9ac', borderRadius: 2 }}></span>
+          <span style={{ color: '#555', fontWeight: metricMode === 'boletos' ? 700 : 500 }}>Volumen de Boletos Pagados</span>
         </div>
       </div>
     </div>

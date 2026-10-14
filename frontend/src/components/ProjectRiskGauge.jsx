@@ -76,11 +76,11 @@ export default function ProjectRiskGauge({ kpis, seasonName, onDownloadReport })
           </div>
           <div className="gauge-meta-item">
             <span>Capacidad</span>
-            <span>17,000 Asientos</span>
+            <span>{kpis?.capacidad_estadio ? `${kpis.capacidad_estadio.toLocaleString()} Asientos` : '17,000 Asientos'}</span>
           </div>
           <div className="gauge-meta-item">
             <span>Total Juegos</span>
-            <span>54 Partidos</span>
+            <span>{kpis?.total_eventos ? `${kpis.total_eventos} Partidos` : 'Partidos de Temporada'}</span>
           </div>
         </div>
 

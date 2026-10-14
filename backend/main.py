@@ -1,26 +1,107 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Dict
 import os
 import shutil
 import tempfile
+import time
+import hmac
+import hashlib
+import secrets
+import uuid
+from collections import defaultdict
 from pathlib import Path
-from database import get_connection, init_db
+from database import get_connection, init_db, verify_password, hash_password
 from loader import load_csv_file, delete_temporada_data, clear_temporada_tickets, load_initial_2026_season, get_or_create_temporada
+from pydantic import BaseModel
 
 app = FastAPI(title="Toros de Tijuana - Sales Dashboard API", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Security and Environment configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "toros-secret-security-key-2026-prod")
+ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS", "")
 
-from pydantic import BaseModel
-import hashlib
-import uuid
+if ALLOWED_ORIGINS_ENV and ALLOWED_ORIGINS_ENV != "*":
+    origins = [o.strip() for o in ALLOWED_ORIGINS_ENV.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+# Token generation and verification
+def create_access_token(user_id: int, username: str, expires_in_seconds: int = 86400 * 7) -> str:
+    exp = int(time.time()) + expires_in_seconds
+    nonce = secrets.token_hex(8)
+    payload = f"{user_id}:{username}:{exp}:{nonce}"
+    sig = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}"
+
+def verify_access_token(token: str) -> Optional[dict]:
+    try:
+        parts = token.strip().split(":")
+        if len(parts) != 5:
+            return None
+        user_id_str, username, exp_str, nonce, sig = parts
+        payload = f"{user_id_str}:{username}:{exp_str}:{nonce}"
+        expected_sig = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            return None
+        if int(exp_str) < int(time.time()):
+            return None
+        return {"user_id": int(user_id_str), "username": username}
+    except Exception:
+        return None
+
+def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token de autenticación requerido")
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Formato de token inválido. Use 'Bearer <token>'")
+    token = parts[1]
+    payload = verify_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+    
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT id, nombre, correo, username, rol, avatar_color FROM usuarios WHERE id = ?", (payload["user_id"],))
+    user = c.fetchone()
+    conn.close()
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
+    return dict(user)
+
+# Rate limiting for login
+LOGIN_ATTEMPTS: Dict[str, List[float]] = defaultdict(list)
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_WINDOW_SECONDS = 300  # 5 minutos
+
+def check_login_rate_limit(key: str):
+    now = time.time()
+    LOGIN_ATTEMPTS[key] = [t for t in LOGIN_ATTEMPTS[key] if now - t < LOCKOUT_WINDOW_SECONDS]
+    if len(LOGIN_ATTEMPTS[key]) >= MAX_LOGIN_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos fallidos de inicio de sesión. Por favor espera 5 minutos."
+        )
+
+def record_failed_login(key: str):
+    LOGIN_ATTEMPTS[key].append(time.time())
+
+def clear_failed_logins(key: str):
+    LOGIN_ATTEMPTS.pop(key, None)
 
 class TemporadaCreate(BaseModel):
     nombre: str
@@ -32,24 +113,43 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"{client_ip}:{req.username.strip().lower()}"
+    check_login_rate_limit(rate_key)
+
     conn = get_connection()
     cursor = conn.cursor()
-    pw_hash = hashlib.sha256(req.password.encode()).hexdigest()
-    
     cursor.execute("""
-    SELECT id, nombre, correo, username, rol, avatar_color 
+    SELECT id, nombre, correo, username, password_hash, rol, avatar_color 
     FROM usuarios 
-    WHERE (username = ? OR correo = ?) AND password_hash = ?
-    """, (req.username.strip().lower(), req.username.strip().lower(), pw_hash))
+    WHERE username = ? OR correo = ?
+    """, (req.username.strip().lower(), req.username.strip().lower()))
     user = cursor.fetchone()
-    conn.close()
-    
-    if not user:
+
+    if not user or not verify_password(req.password, user["password_hash"]):
+        conn.close()
+        record_failed_login(rate_key)
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
-        
-    user_dict = dict(user)
-    token = f"token_{uuid.uuid4().hex[:16]}"
+
+    # Migrate legacy un-salted hash if present
+    if "$" not in user["password_hash"]:
+        new_salted = hash_password(req.password)
+        cursor.execute("UPDATE usuarios SET password_hash = ? WHERE id = ?", (new_salted, user["id"]))
+        conn.commit()
+
+    conn.close()
+    clear_failed_logins(rate_key)
+
+    user_dict = {
+        "id": user["id"],
+        "nombre": user["nombre"],
+        "correo": user["correo"],
+        "username": user["username"],
+        "rol": user["rol"],
+        "avatar_color": user["avatar_color"]
+    }
+    token = create_access_token(user["id"], user["username"])
     return {
         "status": "success",
         "user": user_dict,
@@ -105,7 +205,7 @@ def list_temporadas():
     return rows
 
 @app.post("/api/temporadas")
-def create_temporada(payload: TemporadaCreate):
+def create_temporada(payload: TemporadaCreate, current_user: dict = Depends(get_current_user)):
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -120,19 +220,19 @@ def create_temporada(payload: TemporadaCreate):
         raise HTTPException(status_code=400, detail=f"Error al crear temporada: {str(e)}")
 
 @app.delete("/api/temporadas/{temporada_id}")
-def delete_temporada(temporada_id: int):
+def delete_temporada(temporada_id: int, current_user: dict = Depends(get_current_user)):
     delete_temporada_data(temporada_id)
     return {"status": "success", "message": f"Temporada {temporada_id} eliminada con éxito."}
 
 @app.post("/api/temporadas/{temporada_id}/reset")
-def reset_temporada(temporada_id: int):
+def reset_temporada(temporada_id: int, current_user: dict = Depends(get_current_user)):
     """Limpia todos los datos de ventas de una temporada para poder recargar desde la interfaz."""
     clear_temporada_tickets(temporada_id)
     return {"status": "success", "message": f"Datos de boletos de temporada {temporada_id} eliminados. Lista para recargar."}
 
 @app.post("/api/init-2026")
 @app.post("/api/temporadas/{temporada_id}/reload-initial")
-def reload_initial(temporada_id: int = 1):
+def reload_initial(temporada_id: int = 1, current_user: dict = Depends(get_current_user)):
     """Recarga los 3 CSVs iniciales de 2026."""
     temp_id = get_or_create_temporada("Temporada 2026", 2026)
     clear_temporada_tickets(temp_id)
@@ -185,11 +285,10 @@ def get_dashboard_data(temporada_id: int):
     
     # Capacidad estimada Estadio Chevron = 17,000 asientos por juego
     capacidad_estadio = 17000
-    aforo_promedio_pct = round(((boletos_pagados + boletos_cortesias) / (tot_events * capacidad_estadio)) * 100, 1) if tot_events > 0 else 0
-    if aforo_promedio_pct > 100:
-        aforo_promedio_pct = 78.4 # normalización realista para la métrica
+    total_aforo_posible = tot_events * capacidad_estadio
+    aforo_promedio_pct = round(((boletos_pagados + boletos_cortesias) / total_aforo_posible) * 100, 1) if total_aforo_posible > 0 else 0.0
 
-    # Risk / Occupation score (0-10, similar to the 5 score in Adminty)
+    # Risk / Occupation score (0-10, based on occupancy)
     gauge_score = round(min(10.0, max(1.0, (aforo_promedio_pct / 100.0) * 10.0)), 1) if aforo_promedio_pct else 5.0
 
     # 2. Sales Analytics Timeline (by week / date range)
@@ -206,7 +305,7 @@ def get_dashboard_data(temporada_id: int):
     """, (temporada_id,))
     daily_sales = [dict(r) for r in cursor.fetchall()]
 
-    # 3. Events Breakdown Table (with sparklines)
+    # 3. Events Breakdown Table (with real sparklines)
     cursor.execute("""
     SELECT 
         ventas.evento_nombre,
@@ -226,13 +325,47 @@ def get_dashboard_data(temporada_id: int):
     """, (temporada_id,))
     events_raw = cursor.fetchall()
     
+    # Query real daily sales per event to build authentic cumulative sparkline curves
+    cursor.execute("""
+    SELECT 
+        evento_nombre,
+        substr(fecha_venta, 1, 10) as dia,
+        COUNT(*) as cant
+    FROM ventas
+    WHERE temporada_id = ? AND fecha_venta != ''
+    GROUP BY evento_nombre, dia
+    ORDER BY dia ASC
+    """, (temporada_id,))
+    spark_rows = cursor.fetchall()
+    event_progress = defaultdict(list)
+    for sr in spark_rows:
+        event_progress[sr["evento_nombre"]].append(sr["cant"])
+
     events_table = []
     for ev in events_raw:
-        # Mini sparkline data: simulate/sample sales progression over 6 intervals
         p_count = ev["pagados"] or 0
         ing = round(ev["ingreso"] or 0, 2)
+        ev_name = ev["evento_nombre"]
+
+        # Build real cumulative progression sampled across 6 points
+        counts = event_progress.get(ev_name, [])
+        if not counts:
+            sparkline = [p_count] * 6 if p_count > 0 else [0] * 6
+        else:
+            cum = []
+            running = 0
+            for c in counts:
+                running += c
+                cum.append(running)
+            if len(cum) <= 6:
+                step = (len(cum) - 1) / 5.0 if len(cum) > 1 else 0
+                sparkline = [cum[int(round(i * step))] for i in range(6)] if len(cum) > 1 else [cum[0]] * 6
+            else:
+                step = (len(cum) - 1) / 5.0
+                sparkline = [cum[int(round(i * step))] for i in range(6)]
+
         events_table.append({
-            "evento": ev["evento_nombre"],
+            "evento": ev_name,
             "fase": ev["fase"] or "Temporada Regular",
             "rival": ev["rival"] or "Toros",
             "jornada": ev["jornada"] or "J1",
@@ -241,14 +374,7 @@ def get_dashboard_data(temporada_id: int):
             "cortesias": ev["cortesias"] or 0,
             "ingreso": ing,
             "ticket_promedio": round(ev["ticket_prom"] or 0, 2),
-            "sparkline": [
-                round(p_count * 0.1),
-                round(p_count * 0.25),
-                round(p_count * 0.18),
-                round(p_count * 0.45),
-                round(p_count * 0.75),
-                p_count
-            ]
+            "sparkline": sparkline
         })
 
     # 4. Sales by Canal
@@ -328,6 +454,8 @@ def get_dashboard_data(temporada_id: int):
             "ticket_promedio": ticket_promedio,
             "total_ordenes": total_ordenes,
             "total_descuentos": total_descuentos,
+            "total_eventos": tot_events,
+            "capacidad_estadio": capacidad_estadio,
             "aforo_promedio_pct": aforo_promedio_pct,
             "gauge_score": gauge_score
         },
@@ -407,25 +535,60 @@ def compare_temporadas(t1_id: Optional[int] = Query(None), t2_id: Optional[int] 
         }
     }
 
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB max
+
 @app.post("/api/cargas/upload")
-async def upload_csv_file(temporada_id: Optional[int] = Form(None), file: UploadFile = File(...)):
+async def upload_csv_file(
+    temporada_id: Optional[int] = Form(None), 
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
     if not temporada_id or temporada_id <= 0:
         temporada_id = get_or_create_temporada("Temporada 2026", 2026)
-    # Save uploaded file to temp file
+
+    # 1. Validate file extension and sanitize display name (path traversal prevention)
+    raw_filename = file.filename or ""
+    safe_filename = Path(raw_filename).name
+    if not safe_filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos con extensión .csv")
+
+    # 2. Secure temporary filename to avoid path traversal
     upload_dir = Path(__file__).resolve().parent / "uploads"
     upload_dir.mkdir(exist_ok=True)
-    temp_path = upload_dir / file.filename
+    temp_path = upload_dir / f"secure_{uuid.uuid4().hex}.csv"
 
-    with open(temp_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
+    # 3. Stream file and enforce maximum size
+    total_bytes = 0
     try:
+        with open(temp_path, "wb") as buffer:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > MAX_UPLOAD_SIZE:
+                    raise HTTPException(
+                        status_code=413, 
+                        detail=f"El archivo excede el tamaño máximo permitido ({MAX_UPLOAD_SIZE // (1024*1024)} MB)"
+                    )
+                buffer.write(chunk)
+
         result = load_csv_file(str(temp_path), temporada_id)
+
+        # Update filename in cargas log to clean display name
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE cargas SET nombre_archivo = ? WHERE id = ?", (safe_filename, result["carga_id"]))
+        conn.commit()
+        conn.close()
+
         return {
             "status": "success",
             "result": result,
-            "message": f"Archivo {file.filename} procesado exitosamente."
+            "message": f"Archivo {safe_filename} procesado exitosamente."
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando CSV: {str(e)}")
     finally:
