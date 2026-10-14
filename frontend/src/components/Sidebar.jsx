@@ -71,6 +71,29 @@ export default function Sidebar({
           <span className="nav-badge badge-hot">HOT</span>
         </div>
 
+        <div 
+          className={`nav-item ${currentView === 'asistente' ? 'active' : ''}`}
+          onClick={() => handleNavClick('asistente')}
+        >
+          <div className="nav-item-content">
+            <Sparkles size={18} style={{ color: currentView === 'asistente' ? '#fe9365' : '#a855f7' }} />
+            <span style={{ fontWeight: 600 }}>Asistente IA</span>
+          </div>
+          <span 
+            className="nav-badge" 
+            style={{ 
+              background: 'linear-gradient(135deg, #6366f1, #a855f7)', 
+              color: '#ffffff',
+              fontSize: '0.65rem',
+              fontWeight: 700,
+              padding: '2px 6px',
+              borderRadius: '4px'
+            }}
+          >
+            GEMINI
+          </span>
+        </div>
+
         <div className="nav-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>Temporadas</span>
           <span 

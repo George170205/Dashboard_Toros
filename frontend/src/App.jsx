@@ -10,6 +10,7 @@ import CargasView from './components/CargasView';
 import ComparativaView from './components/ComparativaView';
 import CanalesView from './components/CanalesView';
 import ReglasView from './components/ReglasView';
+import AiAssistantView from './components/AiAssistantView';
 import CreateSeasonModal from './components/CreateSeasonModal';
 import LoginScreen from './components/LoginScreen';
 import { Calendar, RefreshCw, PlusCircle, AlertCircle } from 'lucide-react';
@@ -340,6 +341,7 @@ export default function App() {
             <div>
               <h1 className="page-title">
                 {currentView === 'dashboard' && 'Dashboard de Ventas'}
+                {currentView === 'asistente' && 'Asistente IA de Mercado'}
                 {currentView === 'comparativa' && 'Comparativa Multitemporada'}
                 {currentView === 'canales' && 'Canales de Venta & Zonas'}
                 {currentView === 'cargas' && 'Cargas & Auditoría de Archivos'}
@@ -446,6 +448,15 @@ export default function App() {
           {/* VIEW: Reglas de Negocio */}
           {currentView === 'reglas' && (
             <ReglasView />
+          )}
+
+          {/* VIEW: Asistente IA */}
+          {currentView === 'asistente' && (
+            <AiAssistantView 
+              activeTemporada={activeTemporada}
+              authFetch={authFetch}
+              API_URL={API_URL}
+            />
           )}
         </main>
       </div>

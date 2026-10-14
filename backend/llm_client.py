@@ -3,10 +3,17 @@ Cliente de Google Gemini utilizando el SDK oficial moderno `google-genai`.
 """
 
 import os
+from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
 from google import genai
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Cargar variables de entorno desde backend/.env si existe
+env_path = Path(__file__).resolve().parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 class GeminiNotConfiguredError(Exception):
     """Excepción cuando GEMINI_API_KEY no está presente en el entorno."""

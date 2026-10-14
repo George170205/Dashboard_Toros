@@ -9,6 +9,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Cargar variables de entorno locales si existen
+env_path = Path(__file__).resolve().parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+
 import jwt
 from database import get_connection, init_db, verify_password, hash_password, needs_rehash
 from loader import load_csv_file, delete_temporada_data, clear_temporada_tickets, load_initial_2026_season, get_or_create_temporada
@@ -635,43 +642,38 @@ async def chat_endpoint(req: ChatRequest, current_user: dict = Depends(get_curre
         "7. IDIOMA Y ESTILO: Responde siempre en español, de forma analítica, ejecutiva, estructurada y profesional."
     )
 
-    contents = []
+    history = []
     if req.historial:
         for msg in req.historial[-8:]:
             role = "user" if msg.rol.lower() in ("user", "usuario") else "model"
-            contents.append(types.Content(
+            history.append(types.Content(
                 role=role,
                 parts=[types.Part.from_text(text=msg.texto)]
             ))
 
     current_prompt = f"[Temporada ID activa: {req.temporada_id}]\nPregunta: {pregunta}"
-    contents.append(types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=current_prompt)]
-    ))
 
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
         temperature=0.2,
-        tools=AVAILABLE_TOOLS,
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(
-            maximum_remote_calls=5
-        )
+        tools=AVAILABLE_TOOLS
     )
 
     try:
-        response = client.models.generate_content(
+        chat = client.chats.create(
             model=model_name,
-            contents=contents,
-            config=config
+            config=config,
+            history=history
         )
 
+        response = chat.send_message(current_prompt)
+
         herramientas_usadas = []
-        if response.function_calls:
+        if getattr(response, "function_calls", None):
             for fc in response.function_calls:
                 herramientas_usadas.append({
                     "nombre": fc.name,
-                    "argumentos": fc.args
+                    "argumentos": getattr(fc, "args", {})
                 })
 
         return {
