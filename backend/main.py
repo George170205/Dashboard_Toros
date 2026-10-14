@@ -669,12 +669,13 @@ async def chat_endpoint(req: ChatRequest, current_user: dict = Depends(get_curre
         response = chat.send_message(current_prompt)
 
         herramientas_usadas = []
-        if getattr(response, "function_calls", None):
-            for fc in response.function_calls:
-                herramientas_usadas.append({
-                    "nombre": fc.name,
-                    "argumentos": getattr(fc, "args", {})
-                })
+        for h in chat.get_history():
+            for part in getattr(h, "parts", []):
+                if getattr(part, "function_call", None):
+                    herramientas_usadas.append({
+                        "nombre": part.function_call.name,
+                        "argumentos": getattr(part.function_call, "args", {})
+                    })
 
         return {
             "status": "success",
@@ -690,9 +691,15 @@ async def chat_endpoint(req: ChatRequest, current_user: dict = Depends(get_curre
             detail=f"Error en el servicio de Gemini: {getattr(e, 'message', str(e))}"
         )
     except Exception as e:
+        err_msg = str(e)
+        if "getaddrinfo" in err_msg.lower() or "connecterror" in err_msg.lower() or "timeout" in err_msg.lower():
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo establecer conexión con los servidores de Google Gemini. Verifica tu conexión de red o reintenta en unos momentos."
+            )
         raise HTTPException(
             status_code=500,
-            detail=f"Error procesando la consulta con el Asistente IA: {str(e)}"
+            detail=f"Error procesando la consulta con el Asistente IA: {err_msg}"
         )
 
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB max
