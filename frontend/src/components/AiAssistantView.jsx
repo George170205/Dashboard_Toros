@@ -32,6 +32,7 @@ export default function AiAssistantView({ activeTemporada, authFetch, API_URL })
   const [isLoading, setIsLoading] = useState(false);
   const [errorBanner, setErrorBanner] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  const [activeModel, setActiveModel] = useState('Gemini Flash');
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -132,6 +133,9 @@ export default function AiAssistantView({ activeTemporada, authFetch, API_URL })
       }
 
       const data = await res.json();
+      if (data.modelo) {
+        setActiveModel(data.modelo);
+      }
       const botMessage = {
         id: 'bot-' + Date.now(),
         rol: 'assistant',
@@ -195,7 +199,7 @@ export default function AiAssistantView({ activeTemporada, authFetch, API_URL })
               </h2>
               <span className="ai-badge-live">
                 <span className="ai-pulse-dot"></span>
-                Gemini 3.8 Flash • Function Calling
+                {activeModel} • Function Calling
               </span>
             </div>
             <div style={{ fontSize: '0.8rem', color: '#78909c', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>

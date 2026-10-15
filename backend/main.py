@@ -660,9 +660,9 @@ async def chat_endpoint(req: ChatRequest, current_user: dict = Depends(get_curre
         tools=AVAILABLE_TOOLS
     )
 
-    # Lista de modelos candidatos para alta disponibilidad ante saturación temporal
+    # Lista de modelos candidatos verificados en la cuenta para alta disponibilidad
     candidate_models = [model_name]
-    for alt in ["gemini-2.5-flash", "gemini-3.5-flash"]:
+    for alt in ["gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"]:
         if alt not in candidate_models:
             candidate_models.append(alt)
 
