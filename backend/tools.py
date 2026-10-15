@@ -101,13 +101,13 @@ def top_eventos(temporada_id: int = 1, limite: int = 5) -> List[Dict[str, Any]]:
     cursor.execute("""
     SELECT 
         v.evento_nombre,
-        MIN(v.fecha_partido) as fecha,
+        v.fecha_partido as fecha,
         COUNT(CASE WHEN v.es_cortesia = 0 THEN 1 END) as boletos_pagados,
         COUNT(CASE WHEN v.es_cortesia = 1 THEN 1 END) as boletos_cortesias,
         COALESCE(SUM(CASE WHEN v.es_cortesia = 0 THEN v.total ELSE 0 END), 0) as ingreso_bruto
     FROM ventas v
     WHERE v.temporada_id = ?
-    GROUP BY v.evento_nombre
+    GROUP BY v.evento_nombre, v.fecha_partido
     ORDER BY ingreso_bruto DESC
     LIMIT ?
     """, (temporada_id, limite_seguro))

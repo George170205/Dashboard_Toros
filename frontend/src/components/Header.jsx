@@ -6,7 +6,9 @@ export default function Header({
   setSearchTerm, 
   onToggleSidebar,
   currentUser,
-  onLogout 
+  onLogout,
+  kpis,
+  activeTemporada
 }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -96,8 +98,12 @@ export default function Header({
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '0.78rem' }}>
                   <CheckCircle2 size={16} color="#0ac282" style={{ flexShrink: 0, marginTop: 2 }} />
                   <div>
-                    <strong style={{ color: '#1e293b', display: 'block' }}>Temporada 2026 Activa</strong>
-                    <span style={{ color: '#64748b' }}>335,233 boletos indexados sin duplicados.</span>
+                    <strong style={{ color: '#1e293b', display: 'block' }}>{activeTemporada?.nombre || 'Temporada Activa'}</strong>
+                    <span style={{ color: '#64748b' }}>
+                      {kpis?.total_boletos != null 
+                        ? `${new Intl.NumberFormat('es-MX').format(kpis.total_boletos)} boletos indexados sin duplicados.`
+                        : 'Base de datos de ventas indexada sin duplicados.'}
+                    </span>
                   </div>
                 </div>
 
