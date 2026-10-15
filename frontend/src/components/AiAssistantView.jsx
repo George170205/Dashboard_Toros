@@ -120,7 +120,7 @@ export default function AiAssistantView({ activeTemporada, authFetch, API_URL })
         } else if (res.status === 429) {
           setErrorBanner({
             tipo: 'quota',
-            mensaje: 'Límite de cuota alcanzado en la API de Gemini. Por favor espera unos momentos y vuelve a consultar.'
+            mensaje: errorData.detail || 'Límite de cuota alcanzado en la API de Gemini. Por favor espera a que se restablezca el límite diario o revisa tu plan en Google AI Studio.'
           });
         } else {
           setErrorBanner({
