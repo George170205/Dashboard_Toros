@@ -2,8 +2,8 @@ import React from 'react';
 import { Download, Info, ShieldCheck } from 'lucide-react';
 
 export default function ProjectRiskGauge({ kpis, seasonName, onDownloadReport }) {
-  const score = kpis?.gauge_score || 5.0;
-  const aforoPct = kpis?.aforo_promedio_pct || 44.8;
+  const score = kpis?.gauge_score != null ? kpis.gauge_score : 0;
+  const aforoPct = kpis?.aforo_promedio_pct != null ? kpis.aforo_promedio_pct : 0;
 
   // Calculate arc stroke dashoffset for gauge (radius 50, semi-circle length ~ 157)
   const radius = 55;

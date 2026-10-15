@@ -23,13 +23,6 @@ export default function KpiCards({ kpis }) {
             <div className="kpi-value">{formatMoney(kpis?.ingreso_total)}</div>
             <div className="kpi-title">Ingresos Totales (Pagados)</div>
           </div>
-          <div className="mini-bars">
-            <div className="bar" style={{ height: '40%' }}></div>
-            <div className="bar" style={{ height: '70%' }}></div>
-            <div className="bar" style={{ height: '50%' }}></div>
-            <div className="bar" style={{ height: '90%' }}></div>
-            <div className="bar" style={{ height: '100%' }}></div>
-          </div>
         </div>
         <div className="kpi-footer">
           <Clock size={13} />
@@ -44,17 +37,10 @@ export default function KpiCards({ kpis }) {
             <div className="kpi-value">{formatNumber(kpis?.boletos_pagados)}</div>
             <div className="kpi-title">Boletos Pagados</div>
           </div>
-          <div className="mini-bars">
-            <div className="bar" style={{ height: '30%' }}></div>
-            <div className="bar" style={{ height: '60%' }}></div>
-            <div className="bar" style={{ height: '85%' }}></div>
-            <div className="bar" style={{ height: '75%' }}></div>
-            <div className="bar" style={{ height: '100%' }}></div>
-          </div>
         </div>
         <div className="kpi-footer">
           <Clock size={13} />
-          <span>{kpis?.aforo_promedio_pct != null ? `${kpis.aforo_promedio_pct}% del aforo emitido` : 'Aforo por partido'}</span>
+          <span>{kpis?.aforo_promedio_pct != null ? `${kpis.aforo_promedio_pct}% aforo emitido (incl. cortesías)` : 'Aforo por partido'}</span>
         </div>
       </div>
 
@@ -64,13 +50,6 @@ export default function KpiCards({ kpis }) {
           <div>
             <div className="kpi-value">{formatNumber(kpis?.boletos_cortesias)}</div>
             <div className="kpi-title">Cortesías (Sin Costo)</div>
-          </div>
-          <div className="mini-bars">
-            <div className="bar" style={{ height: '80%' }}></div>
-            <div className="bar" style={{ height: '45%' }}></div>
-            <div className="bar" style={{ height: '65%' }}></div>
-            <div className="bar" style={{ height: '35%' }}></div>
-            <div className="bar" style={{ height: '55%' }}></div>
           </div>
         </div>
         <div className="kpi-footer">
@@ -91,13 +70,6 @@ export default function KpiCards({ kpis }) {
               }).format(kpis?.ticket_promedio || 0)}
             </div>
             <div className="kpi-title">Ticket Promedio</div>
-          </div>
-          <div className="mini-bars">
-            <div className="bar" style={{ height: '50%' }}></div>
-            <div className="bar" style={{ height: '75%' }}></div>
-            <div className="bar" style={{ height: '90%' }}></div>
-            <div className="bar" style={{ height: '65%' }}></div>
-            <div className="bar" style={{ height: '100%' }}></div>
           </div>
         </div>
         <div className="kpi-footer">

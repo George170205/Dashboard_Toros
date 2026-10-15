@@ -290,6 +290,8 @@ export default function App() {
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
           currentUser={currentUser}
           onLogout={handleLogout}
+          kpis={kpis}
+          activeTemporada={activeTemporada}
         />
 
         <main className="content-body">

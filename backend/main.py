@@ -330,16 +330,37 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
     total_descuentos = round(kpi_raw["total_descuentos"] or 0, 2)
     ticket_promedio = round(ingreso_total / boletos_pagados, 2) if boletos_pagados > 0 else 0.0
 
-    # Events count
-    cursor.execute("SELECT COUNT(DISTINCT nombre) as total_eventos FROM eventos WHERE temporada_id = ?", (temporada_id,))
-    tot_events = cursor.fetchone()["total_eventos"] or 1
-    
-    # Capacidad estimada Estadio Chevron = 17,000 asientos por juego
-    capacidad_estadio = 17000
-    total_aforo_posible = tot_events * capacidad_estadio
-    aforo_promedio_pct = round(((boletos_pagados + boletos_cortesias) / total_aforo_posible) * 100, 1) if total_aforo_posible > 0 else 0.0
+    # Capacidad configurable del estadio (por defecto 17,000 asientos por juego)
+    capacidad_estadio = int(os.getenv("STADIUM_CAPACITY", "17000"))
 
-    # Risk / Occupation score (0-10, based on occupancy)
+    # Conteo de partidos distintos (nombre + fecha_partido) EXCLUYENDO eventos tipo 'Paquete'
+    cursor.execute("""
+    SELECT COUNT(*) as total_partidos
+    FROM eventos
+    WHERE temporada_id = ?
+      AND (tipo != 'Paquete' OR tipo IS NULL)
+      AND LOWER(nombre) NOT LIKE '%paquete%'
+    """, (temporada_id,))
+    tot_events = cursor.fetchone()["total_partidos"] or 1
+
+    # Boletos emitidos en partidos reales (excluyendo paquetes) para el aforo
+    cursor.execute("""
+    SELECT 
+        COUNT(*) as total_emitidos,
+        COUNT(CASE WHEN es_cortesia = 0 THEN 1 END) as pagados
+    FROM ventas
+    WHERE temporada_id = ?
+      AND LOWER(evento_nombre) NOT LIKE '%paquete%'
+    """, (temporada_id,))
+    partidos_kpi = cursor.fetchone()
+    boletos_partidos_total = partidos_kpi["total_emitidos"] or 0
+    boletos_partidos_pagados = partidos_kpi["pagados"] or 0
+
+    total_aforo_posible = tot_events * capacidad_estadio
+    aforo_promedio_pct = round((boletos_partidos_total / total_aforo_posible) * 100, 1) if total_aforo_posible > 0 else 0.0
+    aforo_pagado_pct = round((boletos_partidos_pagados / total_aforo_posible) * 100, 1) if total_aforo_posible > 0 else 0.0
+
+    # Risk / Occupation score (0-10, basado en aforo promedio)
     gauge_score = round(min(10.0, max(1.0, (aforo_promedio_pct / 100.0) * 10.0)), 1) if aforo_promedio_pct else 5.0
 
     # 2. Sales Analytics Timeline (by week / date range)
@@ -356,50 +377,56 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
     """, (temporada_id,))
     daily_sales = [dict(r) for r in cursor.fetchall()]
 
-    # 3. Events Breakdown Table (Optimizado: agregación directa sobre ventas + metadata en memoria)
+    # 3. Events Breakdown Table (Agrupación correcta por evento_nombre Y fecha_partido)
     cursor.execute("""
     SELECT 
         evento_nombre,
-        MIN(fecha_partido) as fecha_partido,
+        fecha_partido,
         COUNT(CASE WHEN es_cortesia = 0 THEN 1 END) as pagados,
         COUNT(CASE WHEN es_cortesia = 1 THEN 1 END) as cortesias,
         COALESCE(SUM(CASE WHEN es_cortesia = 0 THEN total ELSE 0 END), 0) as ingreso,
         COALESCE(AVG(CASE WHEN es_cortesia = 0 THEN total END), 0) as ticket_prom
     FROM ventas
     WHERE temporada_id = ?
-    GROUP BY evento_nombre
-    ORDER BY MIN(fecha_partido) ASC, ingreso DESC
+    GROUP BY evento_nombre, fecha_partido
+    ORDER BY fecha_partido ASC, ingreso DESC
     """, (temporada_id,))
     events_raw = cursor.fetchall()
 
-    cursor.execute("SELECT nombre, fase, rival, jornada FROM eventos WHERE temporada_id = ?", (temporada_id,))
-    ev_metadata = {r["nombre"]: dict(r) for r in cursor.fetchall()}
+    cursor.execute("SELECT nombre, fecha_partido, fase, rival, jornada, tipo FROM eventos WHERE temporada_id = ?", (temporada_id,))
+    ev_metadata_tuples = {(r["nombre"], r["fecha_partido"]): dict(r) for r in cursor.fetchall()}
+    cursor.execute("SELECT nombre, fase, rival, jornada, tipo FROM eventos WHERE temporada_id = ?", (temporada_id,))
+    ev_metadata_names = {r["nombre"]: dict(r) for r in cursor.fetchall()}
     
-    # Query real daily sales per event to build authentic cumulative sparkline curves
+    # Cumulative progression per (evento_nombre, fecha_partido) for accurate sparklines
     cursor.execute("""
     SELECT 
         evento_nombre,
+        fecha_partido,
         substr(fecha_venta, 1, 10) as dia,
         COUNT(*) as cant
     FROM ventas
     WHERE temporada_id = ? AND fecha_venta != ''
-    GROUP BY evento_nombre, dia
+    GROUP BY evento_nombre, fecha_partido, dia
     ORDER BY dia ASC
     """, (temporada_id,))
     spark_rows = cursor.fetchall()
     event_progress = defaultdict(list)
     for sr in spark_rows:
-        event_progress[sr["evento_nombre"]].append(sr["cant"])
+        event_progress[(sr["evento_nombre"], sr["fecha_partido"])].append(sr["cant"])
 
     events_table = []
     for ev in events_raw:
         p_count = ev["pagados"] or 0
         ing = round(ev["ingreso"] or 0, 2)
         ev_name = ev["evento_nombre"]
-        meta = ev_metadata.get(ev_name, {})
+        ev_date = ev["fecha_partido"] or "-"
+        meta = ev_metadata_tuples.get((ev_name, ev["fecha_partido"])) or ev_metadata_names.get(ev_name, {})
+        is_paquete = meta.get("tipo") == "Paquete" or "paquete" in ev_name.lower()
+        tipo = "Paquete" if is_paquete else (meta.get("tipo") or "Juego")
 
         # Build real cumulative progression sampled across 6 points
-        counts = event_progress.get(ev_name, [])
+        counts = event_progress.get((ev_name, ev["fecha_partido"]), [])
         if not counts:
             sparkline = [p_count] * 6 if p_count > 0 else [0] * 6
         else:
@@ -417,10 +444,11 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
 
         events_table.append({
             "evento": ev_name,
-            "fase": meta.get("fase") or "Temporada Regular",
+            "tipo": tipo,
+            "fase": meta.get("fase") or ("Temporada Regular" if "Playoffs" not in ev_name and "Serie" not in ev_name else "Playoffs"),
             "rival": meta.get("rival") or "Toros",
             "jornada": meta.get("jornada") or "J1",
-            "fecha": ev["fecha_partido"] or "-",
+            "fecha": ev_date,
             "pagados": p_count,
             "cortesias": ev["cortesias"] or 0,
             "ingreso": ing,
@@ -513,6 +541,7 @@ def get_dashboard_data(temporada_id: int, current_user: dict = Depends(get_curre
             "total_eventos": tot_events,
             "capacidad_estadio": capacidad_estadio,
             "aforo_promedio_pct": aforo_promedio_pct,
+            "aforo_pagado_pct": aforo_pagado_pct,
             "gauge_score": gauge_score
         },
         "daily_sales": daily_sales,

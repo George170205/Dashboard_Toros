@@ -14,10 +14,12 @@ export default function EventsTable({ events = [], searchTerm = '' }) {
     return matchesSearch && ev.fase === faseFilter;
   });
 
-  const toggleSelect = (name) => {
+  const maxPagados = Math.max(...events.map(e => e.pagados || 0), 1);
+
+  const toggleSelect = (key) => {
     setSelectedEvents(prev => ({
       ...prev,
-      [name]: !prev[name]
+      [key]: !prev[key]
     }));
   };
 
@@ -27,8 +29,8 @@ export default function EventsTable({ events = [], searchTerm = '' }) {
     return 'badge-regular';
   };
 
-  // Sparkline builder
-  const renderSparkline = (data = [], isGreen = true) => {
+  // Sparkline builder basado en tendencia real (sube/baja)
+  const renderSparkline = (data = [], isUp = true) => {
     if (!data || data.length < 2) return null;
     const max = Math.max(...data, 1);
     const min = Math.min(...data);
@@ -40,7 +42,7 @@ export default function EventsTable({ events = [], searchTerm = '' }) {
       return `${x},${y}`;
     }).join(' ');
 
-    const strokeColor = isGreen ? '#0ac282' : '#fe5d70';
+    const strokeColor = isUp ? '#0ac282' : '#fe5d70';
 
     return (
       <svg className="sparkline-svg" viewBox={`0 0 ${w} ${h}`}>
@@ -102,15 +104,19 @@ export default function EventsTable({ events = [], searchTerm = '' }) {
           </thead>
           <tbody>
             {filteredEvents.slice(0, 15).map((ev, idx) => {
-              const isSelected = !!selectedEvents[ev.evento];
-              const isEven = idx % 2 === 0;
+              const eventKey = `${ev.evento}_${ev.fecha}`;
+              const isSelected = !!selectedEvents[eventKey];
+              // Tendencia real calculada a partir de los puntos del sparkline
+              const isUp = ev.sparkline && ev.sparkline.length >= 2
+                ? ev.sparkline[ev.sparkline.length - 1] >= ev.sparkline[0]
+                : true;
 
               return (
-                <tr key={idx}>
+                <tr key={eventKey}>
                   <td>
                     <span 
                       style={{ cursor: 'pointer', color: isSelected ? '#fe5d70' : '#b0bec5' }}
-                      onClick={() => toggleSelect(ev.evento)}
+                      onClick={() => toggleSelect(eventKey)}
                     >
                       {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
                     </span>
@@ -118,9 +124,15 @@ export default function EventsTable({ events = [], searchTerm = '' }) {
                   <td>
                     <div className="event-title">
                       <span>{ev.evento}</span>
-                      <span className={`event-badge ${getFaseBadgeClass(ev.fase)}`}>
-                        {ev.fase}
-                      </span>
+                      {ev.tipo === 'Paquete' ? (
+                        <span className="event-badge badge-playoffs" style={{ background: '#e0e7ff', color: '#4338ca' }}>
+                          Paquete
+                        </span>
+                      ) : (
+                        <span className={`event-badge ${getFaseBadgeClass(ev.fase || '')}`}>
+                          {ev.fase}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td style={{ fontSize: '0.78rem', color: '#78909c' }}>
@@ -132,7 +144,7 @@ export default function EventsTable({ events = [], searchTerm = '' }) {
                       <div style={{ width: 70, height: 4, background: '#e2e8f0', borderRadius: 2, overflow: 'hidden' }}>
                         <div 
                           style={{ 
-                            width: `${Math.min(100, (ev.pagados / 12000) * 100)}%`, 
+                            width: `${Math.min(100, (ev.pagados / maxPagados) * 100)}%`, 
                             height: '100%', 
                             background: '#0ac282' 
                           }} 
@@ -144,7 +156,7 @@ export default function EventsTable({ events = [], searchTerm = '' }) {
                     {ev.cortesias.toLocaleString()}
                   </td>
                   <td>
-                    {renderSparkline(ev.sparkline, isEven)}
+                    {renderSparkline(ev.sparkline, isUp)}
                   </td>
                   <td>
                     ${ev.ticket_promedio.toFixed(2)}
